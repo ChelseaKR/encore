@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime data — a self-hosted instance's database, backups, and Fernet
+# key must never be committed. This is part of the local-first guarantee, not
+# a convenience: Encore holds a Plex token and Apprise URLs (docs/audits/dpia.md).
+/instance/
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite3
+*.fernet-key
+
+# Secrets — never commit. See SECURITY.md.
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude Code session tooling (not part of the project)
+.claude/
+
+# runtime-fetched portfolio-standards (never commit)
+.standards/

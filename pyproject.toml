@@ -1,0 +1,111 @@
+# pyproject.toml — single, declarative source of build, dependency, and tool config.
+# Configurability/administrability: behaviour is config-over-code; this file is the
+# one place project-wide tooling is set.
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "encore"
+version = "0.1.0"
+description = "A free, self-hosted, notification-first companion for Plex music libraries: alerts on new releases from artists you already have, recommends what's adjacent — never downloads anything."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Chelsea Kelly-Reif" }]
+keywords = [
+    "plex", "music", "release-radar", "musicbrainz", "listenbrainz",
+    "self-hosted", "notifications", "recommendations",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Framework :: FastAPI",
+]
+
+# Affordability/self-sustainability: a self-hosted, single-container app for a
+# hobbyist audience — every runtime dependency is free, keyless-API-friendly,
+# and has no paid tier this project could be rug-pulled by (04-architecture.md).
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlmodel>=0.0.22",
+    "apscheduler>=3.10",
+    "httpx>=0.27",
+    "plexapi>=4.15",
+    "apprise>=1.9",
+    "jinja2>=3.1",
+    "cryptography>=42,<50",
+    "babel>=2.16",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "pytest-httpx>=0.30",
+    "ruff>=0.15",
+    "mypy>=1.11",
+    "pip-audit>=2.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/ChelseaKR/encore"
+Source = "https://github.com/ChelseaKR/encore"
+Issues = "https://github.com/ChelseaKR/encore/issues"
+
+# Deployability/installability: the container is the primary install path
+# (04-architecture.md §deployment); the console script is a convenience for
+# running the server directly on a host that already has Python 3.12+.
+[project.scripts]
+encore = "encore.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/encore"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Correctness + analyzability gates. E/F pyflakes, I import order, B bugbear,
+# UP pyupgrade, S bandit security, SIM simplify, RUF ruff-specific.
+select = ["E", "F", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["E501"]  # line length handled by the formatter
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # asserts are the point of a test
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+mypy_path = "src"
+files = ["src/encore"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "no_outing: the sentinel-artist tripwire — taste data must never leak to an unauthorized viewer, a log line, or an outbound request (06-privacy-responsible-tech.md)",
+    "read_only_plex: the Plex client wrapper must expose no mutating verbs (04-architecture.md §Plex integration constraints)",
+    "no_secrets_in_logs: structured logs must never contain a Plex token, Apprise URL, or feed token substring (OBS-11)",
+    "recovery: backup/export/wipe and disaster-recovery guarantees",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["encore"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 85

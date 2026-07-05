@@ -1,0 +1,36 @@
+# CODEOWNERS — encore
+#
+# A single maintainer owns this project. @ChelseaKR is the catch-all owner of
+# every path; the explicit blocks below exist to make the high-stakes
+# surfaces of this repo loud in review, not to delegate them — a change to
+# credential handling, matching thresholds, or the Plex client's read-only
+# guarantee is never silently skippable.
+#
+# Order matters: the last matching pattern wins, so the catch-all comes first
+# and the specific overrides follow.
+
+# Catch-all: @ChelseaKR owns everything in the repository.
+*                                       @ChelseaKR
+
+# Secrets-at-rest and the Plex read-only client — a regression here can leak
+# a Plex token/Apprise URL or let Encore write to someone's Plex server
+# (04-architecture.md §Plex integration constraints; hard non-goal in README).
+/src/encore/plex/                      @ChelseaKR
+/src/encore/secrets.py                 @ChelseaKR
+
+# Identity matching thresholds — the correctness keystone (R1 in
+# docs/adr/0006-mbid-matching-with-review-queue.md); every downstream feature
+# inherits F2's match quality.
+/src/encore/matching/                  @ChelseaKR
+
+# Responsible-tech / privacy audits and the mechanical no-outing guards.
+/docs/RESPONSIBLE-TECH-AUDITS.md       @ChelseaKR
+/docs/audits/                          @ChelseaKR
+/tests/test_no_outing.py               @ChelseaKR
+/tests/test_read_only_plex.py          @ChelseaKR
+
+# Governance and supply chain.
+/.github/                              @ChelseaKR
+/docs/adr/                             @ChelseaKR
+/SECURITY.md                           @ChelseaKR
+/DEFINITION_OF_DONE.md                 @ChelseaKR

@@ -1,0 +1,8 @@
+title = "encore gitleaks config"
+
+# Extend the default gitleaks ruleset; no allowlisted paths yet since the repo
+# is still an empty scaffold (M0). A Plex-token or Apprise-URL fixture that
+# needs a test allowlist must go through tests/fixtures/ with an explicit
+# entry here, reviewed by CODEOWNERS (SEC-17/18) — never a blanket ignore.
+[extend]
+useDefault = true

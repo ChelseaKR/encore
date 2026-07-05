@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use encore, please cite it as below."
+title: "encore — a release radar and recommender for your Plex music library"
+abstract: >-
+  A free, self-hosted, notification-first companion for Plex music libraries: it
+  reads the artists you already have, matches them to MusicBrainz, alerts you when
+  any of them release something new, and recommends adjacent artists via
+  ListenBrainz — never downloading anything.
+type: software
+authors:
+  - given-names: Chelsea
+    family-names: Kelly-Reif
+license: Apache-2.0
+repository-code: "https://github.com/ChelseaKR/encore"
+url: "https://github.com/ChelseaKR/encore"
+version: "0.1.0"
+keywords:
+  - plex
+  - music
+  - release-radar
+  - musicbrainz
+  - listenbrainz
+  - self-hosted
+  - recommendations

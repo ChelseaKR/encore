@@ -1,0 +1,50 @@
+# Standards check — fetches the PINNED portfolio-standards at build time and
+# runs the freshness gate. Nothing from portfolio-standards is committed into
+# this repo; the standards exist only on the runner (.standards/, gitignored).
+#
+# Requires the repo secret STANDARDS_DEPLOY_KEY (the read-only deploy key's
+# private half, shared across the portfolio's private consuming repos).
+# Installed by automation/ci-fetch/install.sh in ChelseaKR/portfolio-standards.
+
+name: standards
+
+# pull_request is intentionally omitted: fork PRs do not receive repo secrets, so the
+# private-standards fetch (deploy key) would fail for external contributors once this
+# repo is public. The freshness gate is a maintainer concern, enforced on every push to main.
+on:
+  push:
+    branches: [main]
+
+# Least privilege: this job only reads. No write scope is granted to GITHUB_TOKEN.
+permissions:
+  contents: read
+
+concurrency:
+  group: standards-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  standards:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Fetch pinned standards (private, read-only deploy key)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ChelseaKR/portfolio-standards
+          ref: v1.0.1                      # bump in lockstep with .standards-version
+          ssh-key: ${{ secrets.STANDARDS_DEPLOY_KEY }}
+          path: .standards
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.x'
+
+      - name: Standards freshness gate
+        run: python3 .standards/automation/check_staleness.py --standards-dir .standards

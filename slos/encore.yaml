@@ -1,0 +1,19 @@
+# SLO declaration — Observability Standard §4 schema (OBS-14).
+# Tier A (running self-hosted service): a reference-deployment SLO, documented as
+# operator guidance for self-hosters rather than an SLA Chelsea's own instance
+# promises to anyone else (04-architecture.md §deployment & operations honestly
+# adapts the standard's "Tier A" framing for a tool that ships to other people's
+# machines, not one Chelsea runs as a service).
+#
+# Not yet enforced by an alert (no scheduler/poller code exists at M0) — this is
+# the target the M2 release-watching pipeline is built to hold, recorded now so
+# the commitment predates the code rather than being retrofitted.
+name: encore-poll-freshness
+sli_query: |
+  # Fraction of watched artists whose last successful MusicBrainz poll is within
+  # cadence + 6h grace. Implemented once the watch scheduler (F3) exists;
+  # placeholder query shape below, to be wired to real metrics at M2.
+  1 - (count(encore_artist_last_poll_age_seconds > (encore_poll_cadence_seconds + 21600)) / count(encore_artist_last_poll_age_seconds))
+target_percentage: 99.0
+window_days: 28
+error_budget_policy: pause-new-watch-features-on-50pct-burn
