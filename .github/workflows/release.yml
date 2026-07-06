@@ -2,8 +2,13 @@
 # ADR on release integrity — full signing/SBOM/provenance chain).
 #
 # Stubbed at M0: wired and shaped correctly, but only fires on a signed vX.Y.Z tag,
-# which does not exist yet. Re-runs `make verify` at the tagged commit (REL-14) before
-# building, so a release can never ship a commit that didn't pass its own gate.
+# which does not exist yet. Re-runs the literal `make verify` at the tagged commit
+# (REL-14, P0-4) before building — lint, type, test/coverage, AND security
+# (pip-audit + gitleaks), the exact same target a contributor runs locally, so a
+# release can never ship a commit that didn't pass its own gate. (Earlier version
+# of this job re-implemented ruff/mypy/pytest by hand and silently dropped the
+# security stage entirely — fixed here by calling `make verify` instead of
+# reinventing it.)
 name: release
 
 on:
@@ -19,19 +24,37 @@ concurrency:
 
 jobs:
   verify-at-tag:
-    name: re-verify at tagged commit
+    name: re-verify at tagged commit (make verify)
     runs-on: ubuntu-latest
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          fetch-depth: 0  # gitleaks (inside `make verify`) needs full history
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3  # v8.3.0
         with:
           python-version: "3.12"
-      - run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - run: ruff format --check src tests && ruff check src tests
-      - run: mypy
-      - run: pytest --cov --cov-fail-under=85
+          # setup-uv enables its cache by default; explicitly turned off here
+          # (unlike ci.yml): this workflow runs on a tag push, and a cross-run
+          # uv/pip cache is exactly the cache-poisoning surface zizmor flags on
+          # release pipelines — a poisoned cache entry could ride into a signed,
+          # published artifact. ci.yml runs on mutable branches/PRs where that
+          # risk is materially lower and the speed win is worth it.
+          enable-cache: false
+      - name: Install gitleaks (pinned, matches .pre-commit-config.yaml)
+        run: |
+          GL=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
+          chmod +x /usr/local/bin/gitleaks
+      - name: make install
+        run: make install
+      - name: make verify — lint + type + cov + security + todo-gate
+        run: make verify
 
   build-sign-publish:
     name: build · SBOM · sign · publish (GHCR)
@@ -42,11 +65,27 @@ jobs:
       packages: write
       id-token: write  # keyless cosign (SEC-29)
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
       - name: Build image
         run: docker build -t "ghcr.io/chelseakr/encore:${GITHUB_REF_NAME}" .
-      # TODO (pre-v0.1.0, M4): log in to GHCR, push by digest (never :latest — REL-18),
-      # generate a CycloneDX SBOM (SEC-27), Trivy-scan CRITICAL,HIGH (SEC-28), keyless
-      # cosign-sign + attach SLSA provenance (SEC-29), attach SBOM+provenance+CHANGELOG
-      # to the GitHub release (REL-20). Left unimplemented until there is an actual
-      # release to ship — a stub that always passed would be a false-green gate.
+      - name: Container CVE scan (Trivy, SEC-28) — gate the release, not just CI
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: "ghcr.io/chelseakr/encore:${{ github.ref_name }}"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+      # TODO (pre-v0.1.0, M4, tracked in docs/ROADMAP.md §8's M4 exit criteria):
+      # log in to GHCR, push by digest (never :latest — REL-18), generate a
+      # CycloneDX SBOM (SEC-27), keyless cosign-sign + attach SLSA provenance
+      # (SEC-29), attach SBOM+provenance+CHANGELOG to the GitHub release (REL-20).
+      # The container scan above already runs for real (SEC-28) — left is the
+      # publish/sign/provenance chain, unimplemented until there is an actual
+      # release to ship. A stub that always passed would be a false-green gate.

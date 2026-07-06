@@ -11,7 +11,12 @@ RUN useradd --create-home --uid 10001 encore
 COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=build /usr/local/bin/encore /usr/local/bin/encore
 USER encore
+# OBS-01: fixed identity for any future OTel exporter — set once, here, rather
+# than re-derived per environment later.
+ENV OTEL_SERVICE_NAME=encore
 VOLUME ["/data"]
 EXPOSE 8321
 ENTRYPOINT ["encore"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "8321", "--data-dir", "/data"]
+# No --data-dir: the CLI doesn't parse it yet (src/encore/cli.py) — there is no
+# storage layer to point at until M1. Re-add it here the same PR that wires it.
+CMD ["serve", "--host", "0.0.0.0", "--port", "8321"]

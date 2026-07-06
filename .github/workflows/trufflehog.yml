@@ -1,0 +1,39 @@
+# Scheduled full-history verified-secret scan (SEC-19). gitleaks already covers
+# Gates 1-2 (pre-commit + CI diff, see .pre-commit-config.yaml and ci.yml's
+# "security" job); this is Gate 3 — a periodic sweep of the *entire* commit
+# history with a different engine and its own detector set, catching anything a
+# diff-scoped scan by construction cannot (a secret introduced and later removed
+# in the same PR still shows up in history).
+name: trufflehog
+
+on:
+  schedule:
+    - cron: "0 8 * * 0"  # weekly, Sunday, staggered off ci.yml/codeql.yml's crons
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trufflehog-scheduled
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: full-history secret scan (verified only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0  # full clone — this is a whole-history scan, not a diff
+          persist-credentials: false
+      - name: TruffleHog (verified secrets only)
+        uses: trufflesecurity/trufflehog@00155c9dc586f34d189adc83d3ac2698c2ec551f  # v3.95.8
+        with:
+          path: ./
+          extra_args: --only-verified --fail
