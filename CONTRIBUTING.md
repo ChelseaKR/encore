@@ -49,16 +49,24 @@ A change merges when the full gate is green. Reproduce it locally with:
 make verify
 ```
 
-`make verify` runs **format-check + lint + type + test/coverage + security** — the
-same targets CI runs, on the same pinned toolchain, so green locally means green in
-CI.
+`make verify` runs **format-check + lint + type + test/coverage + security +
+todo-gate** — the exact same targets `ci.yml` and `release.yml` invoke, on the
+same pinned (`uv sync --frozen`) toolchain, so green locally means green in CI:
+there is no second, drifted reimplementation of the gate (CQ-09, CICD-27).
 
 | Gate | Command | What it checks |
 | --- | --- | --- |
-| Format + lint | `make lint` | `ruff format --check` + `ruff check`: correctness, security (bandit rules), import hygiene |
+| Format + lint | `make lint` | `ruff format --check` + `ruff check`: correctness, security (bandit rules), import hygiene, cyclomatic complexity (≤10) |
 | Type | `make type` | `mypy --strict` over `src/encore` |
 | Test + coverage | `make cov` | pytest; branch coverage ≥85% |
-| Security | `make security` | pip-audit (vulnerable deps) + gitleaks (secret scan) |
+| Security | `make security` | pip-audit (vulnerable deps, against the *locked* env) + gitleaks (secret scan) |
+| TODO gate | `make todo-gate` | every `TODO`/`FIXME`/`HACK` names a `#issue` or an `M0`–`M4` milestone |
+
+Cross-cutting rigor lives once in the portfolio's private `STANDARDS/`
+(fetched at CI time via `.github/workflows/standards.yml`, never committed
+here); this file and `DEFINITION_OF_DONE.md` state the per-repo targets those
+standards require, so contributors don't need read access to the private repo
+to know what "done" means here.
 
 Two guarantees are called out separately because they protect the project's core
 privacy promise, and a regression in either must be unmistakable, not buried (once

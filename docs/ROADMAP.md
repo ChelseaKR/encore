@@ -64,7 +64,12 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Perf stage | N/A — no measurable hot path at M0; revisit if the UI grows one | — | 7 | N/A-with-reason (CICD-29) |
 | Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | **N/A at M0** — no Plex/matching code exists yet; applies from M1 |
 | Read-only-Plex guard | AUTO (project) | pass | 8 | **N/A at M0**, same reason; applies from M1 |
-| Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Dockerfile builds in CI (validation only); full scan joins at first tagged release |
+| Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
+| Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
+| Workflow SAST (zizmor) | AUTO (CICD-19) | 0 findings | 5 | Met (wired 2026-07-05, `ci.yml`) |
+| CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Met (wired 2026-07-05, `codeql.yml`) |
+| Full-history secret scan (TruffleHog, verified) | AUTO (SEC-19) | 0 verified | 5 | Met — weekly, `.github/workflows/trufflehog.yml` (wired 2026-07-05) |
+| CI egress policy (Harden-Runner) | AUTO (SEC-04) | audit today | 1–9 | Met at `audit` — every workflow; flips to `block` once the steady-state endpoint allowlist is known from a few runs' telemetry |
 | MB rate-limit violations (soak counter) | AUTO (project) | 0 | 4 | N/A — no polling code exists yet; applies from M2 |
 | Auto-match precision (fixture library) | AUTO (project) | ≥95% fixtures; ≥90% field | 4 | N/A — applies from M1, after the validation spike |
 
@@ -90,7 +95,10 @@ Milestones M0–M4 with exit criteria are specified in full in
   dismissals persist.
 - **M4 — Consumer polish & first release** (repo status → `Beta`). *Exit:*
   v0.1.0 published to GHCR; a second human installs it from docs alone; public/private
-  flip decision put to Chelsea with the trademark-sweep result.
+  flip decision put to Chelsea with the trademark-sweep result — see
+  `docs/adr/0010-branch-protection-deferred-private-repo.md` for what's blocked
+  on that decision (branch protection, Scorecard, private-vulnerability-reporting)
+  and the interim, self-imposed discipline in place until then.
 
 ## 9. Go-to-market & community
 

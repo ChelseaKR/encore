@@ -14,11 +14,17 @@
 set -euo pipefail
 
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-# Required CI checks (job names from .github/workflows/ci.yml).
+# Required CI checks (job names from .github/workflows/ci.yml + codeql.yml).
+# P1-2 adds zizmor and the CodeQL `actions` language pack as required, blocking
+# checks the day protection is applied — a workflow-SAST/workflow-CodeQL finding
+# should never be advisory-only once there's a real merge gate to attach it to.
 CHECKS='[
   {"context":"format · lint · type · test (py3.12)"},
   {"context":"Stage 5 — security (pip-audit · gitleaks)"},
-  {"context":"Stage 9 — build (container, validation only)"}
+  {"context":"Stage 9 — build (container)"},
+  {"context":"workflow SAST (zizmor)"},
+  {"context":"analyze (python)"},
+  {"context":"analyze (actions)"}
 ]'
 
 protect() {

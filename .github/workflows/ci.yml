@@ -1,7 +1,13 @@
 name: ci
 
 # Agility: every push and PR runs the full merge gate. Reproducibility: the gate is
-# the same `make` targets a contributor runs locally, on a pinned toolchain.
+# the same `make` targets a contributor runs locally, on a pinned toolchain — CI
+# calls `make install`/`make lint`/`make type`/`make cov`/`make security`, the exact
+# targets `make verify` composes, so there is no second, drifted reimplementation
+# of the gate (CQ-09, CICD-27). `release.yml`'s `verify-at-tag` runs the literal
+# `make verify` in one non-matrixed job; here the same targets are split across two
+# jobs so gitleaks can get full git history (`fetch-depth: 0`) without paying that
+# clone cost on every matrix leg.
 #
 # Stage numbering follows STANDARDS/CI-CD-STANDARD.md §1 (the canonical pipeline):
 #   1 format · 2 lint · 3 type · 4 test · 5 security · 6 a11y · 7 perf · 8 responsible · 9 build
@@ -9,8 +15,9 @@ name: ci
 # recorded in docs/ROADMAP.md's metrics ledger, not silently skipped. They go live at the
 # milestone that introduces the surface they gate: 6 (a11y) at M2 (first real UI), 8
 # (responsible: read-only-Plex + no-secrets-in-logs + no-outing guards) at M1 (Plex sync
-# lands). Stage 9 here is build-only validation; the signing/SBOM/provenance release path
-# is a separate workflow that runs on tags (M4 scope, docs/adr/0008).
+# lands). Stage 9 here builds AND scans the image (SEC-28) and proves it boots; the
+# signing/SBOM/provenance release path is a separate workflow that runs on tags (M4
+# scope, docs/adr/0008).
 on:
   push:
     branches: [main]
@@ -38,23 +45,29 @@ jobs:
         # save Actions minutes, since the merge to main re-runs the full matrix.
         python: ${{ (github.event_name == 'pull_request') && fromJSON('["3.12"]') || fromJSON('["3.12", "3.13"]') }}
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit  # start permissive; flip to `block` with an explicit
+                                 # allowlist once a few CI runs show the steady-state
+                                 # endpoint set (PyPI, GitHub, Actions runner infra).
+          disable-telemetry: true  # Encore's own no-phone-home posture (README §Non-
+                                    # goals) applies to its CI, not just its product.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          persist-credentials: false  # no step here pushes; nothing should keep a token
+      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3  # v8.3.0
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-      - name: Stage 1 — format
-        run: ruff format --check src tests
-      - name: Stage 2 — lint
-        run: ruff check src tests
+          enable-cache: true
+      - name: Install (uv sync --frozen — CQ-09)
+        run: make install
+      - name: Stage 1-2 — format + lint
+        run: make lint
       - name: Stage 3 — type (mypy strict)
-        run: mypy
+        run: make type
       - name: Stage 4 — test with coverage (branch >=85%)
-        run: pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=85
+        run: make cov
       - name: Upload coverage
         if: matrix.python == '3.12'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -66,31 +79,83 @@ jobs:
     name: Stage 5 — security (pip-audit · gitleaks)
     runs-on: ubuntu-latest
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+          fetch-depth: 0  # gitleaks needs full history, not the default shallow clone
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3  # v8.3.0
         with:
           python-version: "3.12"
-      - run: |
-          python -m pip install --upgrade pip
-          pip install pip-audit
-      - name: Vulnerable dependency scan (pip-audit)
-        run: pip-audit -r <(pip freeze)
-      - name: Secret scan (gitleaks)
-        # Run the pinned gitleaks binary directly rather than gitleaks-action: the
-        # action crashes on pull_request events before it scans (see ledger's ci.yml,
-        # the same fix is reused here). Deterministic and honours .gitleaks.toml.
+          enable-cache: true
+      - name: Install (uv sync --frozen — CQ-09)
+        run: make install
+      - name: Install gitleaks (pinned, matches .pre-commit-config.yaml)
         run: |
           GL=8.30.1
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --exit-code 1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
+          chmod +x /usr/local/bin/gitleaks
+      - name: Vulnerable dependency scan (pip-audit, locked env) + secret scan (gitleaks)
+        # `make security` — the identical target `make verify` composes, run against
+        # the frozen-synced env `uv.lock` describes (SEC-11/13), not a separately
+        # pip-resolved one.
+        run: make security
 
   build:
-    name: Stage 9 — build (container, validation only)
+    name: Stage 9 — build (container)
     runs-on: ubuntu-latest
     needs: [gate, security]
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
       - name: Build image (not pushed — proves the Dockerfile builds)
         run: docker build -t encore:ci .
+      - name: Container CVE scan (Trivy, SEC-28)
+        # Runs on every build, not just at first tagged release — the control's
+        # scope is "every Dockerfile repo" and this image builds on every push
+        # already. This is what turns the Tier-1 `container_cve_scan` check from a
+        # false green (a "Trivy" word in a release.yml TODO comment) into a real one.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: "encore:ci"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Bring-up check — start the container and probe /livez (QM-08, OBS-19)
+        run: |
+          docker run -d --name encore-ci -p 8321:8321 encore:ci
+          for _ in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8321/livez; then
+              echo; echo "livez OK"; exit 0
+            fi
+            sleep 0.5
+          done
+          echo "encore:ci never became ready" >&2
+          docker logs encore-ci >&2 || true
+          exit 1
+
+  workflow-sast:
+    name: workflow SAST (zizmor)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3  # v8.3.0
+      - name: zizmor .github/workflows/
+        run: uvx zizmor .github/workflows/

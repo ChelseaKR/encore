@@ -15,5 +15,58 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lint, strict typing, tests with coverage, dependency + secret scanning, and
   CodeQL, plus a health-check-only FastAPI app and Dockerfile as the empty
   src-layout package the gate runs against.
+- **Conformance remediation (2026-07-05).** `docs/audits/dpia.md` (a real M0 DPIA,
+  not a placeholder); ADR-0009 (AI-Evaluation N/A) and ADR-0010 (branch-protection
+  posture) plus `docs/adr/template.md`; `.github/PULL_REQUEST_TEMPLATE.md`;
+  Harden-Runner (audit mode) on every workflow; zizmor workflow-SAST job; CodeQL's
+  `actions` language pack; a weekly full-history TruffleHog scan
+  (`.github/workflows/trufflehog.yml`); a real Trivy container-CVE scan on every
+  build (`ci.yml` Stage 9) and at release (`release.yml`); a container bring-up +
+  `/livez` check in CI; `scripts/todo-gate.sh` (`make todo-gate`) enforcing an
+  issue or milestone reference on every `TODO`/`FIXME`/`HACK`; ruff `C90`
+  (max-complexity 10) and `TD`/`PGH` rules; `pytest --import-mode=importlib`;
+  `OTEL_SERVICE_NAME` in the Dockerfile.
+- **Standards conformance re-check** against the 2026-07-05 portfolio audit
+  landed as `audit-2026-07-05/encore-REMEDIATION.md`'s dated status markers and
+  execution log — see that file for the full per-item accounting.
+
+### Changed
+
+- CI (`ci.yml`) and the release gate (`release.yml`) now install via
+  `uv sync --frozen` and run the actual `make` targets (`make install`,
+  `make lint`, `make type`, `make cov`, `make security`, and — for
+  `release.yml`'s `verify-at-tag` — the literal `make verify`), instead of a
+  hand-copied `pip install -e ".[dev]"` that floated free of `uv.lock` and
+  quietly drifted from what `make verify` actually runs (CQ-09, CICD-27).
+  `release.yml`'s `verify-at-tag` job now runs the security stage
+  (pip-audit + gitleaks) it previously omitted entirely (REL-14, SEC-11).
+- Dev dependencies moved from `[project.optional-dependencies].dev` to PEP 735
+  `[dependency-groups].dev` (CQ-27); install accordingly with
+  `uv sync --frozen --all-extras --group dev` (`make install`).
+- `__version__` (and the value `FastAPI(version=...)` reports) is now derived via
+  `importlib.metadata.version("encore")` instead of being hand-copied in
+  `src/encore/__init__.py` and `src/encore/app.py` separately (REL-02).
+- README's standards-conformance table no longer states present-tense claims for
+  things that don't exist yet (structured JSON logs, day-one i18n catalog
+  infra, an unqualified accessibility "✅") — each now names its actual M0 state
+  and activation milestone (DOC-14).
+
+### Fixed
+
+- README/`docs/ROADMAP.md` pointed at `docs/audits/dpia.md`, which did not exist;
+  the file is now a real, if narrow, M0 DPIA rather than a corrected-away claim.
+- `docs/RESPONSIBLE-TECH-AUDITS.md` §F claimed "CI itself runs with
+  deny-by-default egress" with no egress control configured anywhere; Harden-Runner
+  (audit mode) is now wired into all four workflows, and the claim is worded to
+  match reality (audit, not yet enforcing).
+- `.github/workflows/standards.yml` referenced a `.standards-version` file that
+  didn't exist; it's now committed and holds the same tag the workflow fetches.
+- `release.yml`'s `# TODO ... Trivy` comment had fooled the portfolio's Tier-1
+  conformance checker into crediting a container scan that didn't exist
+  (`container_cve_scan: pass`, a false green). A real, SHA-pinned
+  `aquasecurity/trivy-action` step now runs on every container build.
+- `src/encore/cli.py`'s `--data-dir` flag was parsed but never used, while the
+  Dockerfile's `CMD` passed it anyway; the flag is dropped until M1's storage
+  layer gives it something to do, and the Dockerfile no longer passes it.
 
 [Unreleased]: https://github.com/ChelseaKR/encore/commits/main

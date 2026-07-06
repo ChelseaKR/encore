@@ -73,8 +73,8 @@ MusicBrainz rate budget) lives in the ADRs under `docs/adr/`.
 ## Getting started (developing)
 
 ```sh
-make install   # uv sync --all-extras --frozen
-make verify    # the full merge gate: format+lint, type, test+coverage, security
+make install   # uv sync --frozen --all-extras --group dev
+make verify    # the full merge gate: format+lint, type, test+coverage, security, todo-gate
 make serve     # run the dev server
 ```
 
@@ -93,17 +93,17 @@ never committed. Per-repo *values* live in [`docs/ROADMAP.md`](docs/ROADMAP.md) 
 
 | Standard | Applies | This repo's posture |
 |---|---|---|
-| Code Quality | ✅ | `ruff` + `mypy --strict`; branch coverage ≥85%; src layout; uv + frozen lock |
-| CI/CD | ✅ | Single `ci.yml`, ordered stages; least-privilege tokens; SHA-pinned actions; `make verify` = CI |
-| Security & Supply Chain | ✅ | ASVS **L2** (holds a Plex token + taste data) — pip-audit, gitleaks, CodeQL, cosign+SBOM on release |
-| Release & Versioning | ✅ | SemVer; signed tags; Keep-a-Changelog; GHCR by digest, never `:latest` |
-| Accessibility | ✅ | WCAG 2.2 AA — **N/A-with-reason at M0**: no UI surface exists yet; goes merge-blocking at M2 (first real UI) |
-| Observability | ✅ | Tier A (running service) — `/livez`+`/readyz`, structured JSON logs, PII/secret redaction |
-| Internationalization | ✅ | Catalog infra from day 1; **English-only at launch** — see [`docs/I18N.md`](docs/I18N.md) |
+| Code Quality | ✅ | `ruff` (incl. complexity + TODO/suppression gates) + `mypy --strict`; branch coverage ≥85%; src layout; uv + frozen lock |
+| CI/CD | ✅ | Single `ci.yml`, ordered stages; least-privilege tokens; SHA-pinned actions; Harden-Runner (audit mode) on every workflow; `make verify` is the literal command CI and `release.yml` run, not a parallel reimplementation |
+| Security & Supply Chain | ✅ | ASVS **L2** (holds a Plex token + taste data) — pip-audit + gitleaks (locked env, pre-commit + CI + weekly full-history TruffleHog sweep), CodeQL (python + actions), zizmor, Trivy on every container build; cosign+SBOM **at first tagged release (M4)** |
+| Release & Versioning | ✅ | SemVer; signed tags (from M4, first release); Keep-a-Changelog; GHCR by digest, never `:latest` |
+| Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A at M0**: no UI surface exists yet; goes merge-blocking at M2 (first real UI) |
+| Observability | ✅ | Tier A (running service) — `/livez`+`/readyz` today; structured JSON logs + PII/secret redaction **land at M1–M2** with the routes/pollers they measure (`docs/ROADMAP.md` §11) |
+| Internationalization | ✅ | **English-only at launch**; gettext seam **planned at M2** when the first user-facing string ships — see [`docs/I18N.md`](docs/I18N.md) |
 | AI Evaluation | **N/A** | No LLM/model in the product — flips to Applies if F14 ("vibe" recs) ever lands |
 | Quality & Metrics | ✅ | Metrics ledger in `docs/ROADMAP.md`; `make verify` reproduces the CI gate set |
 | Documentation | ✅ | This README + ADRs + ROADMAP + RESPONSIBLE-TECH-AUDITS + CHANGELOG, kept current |
-| Responsible Tech | ✅ | Audits A–F in `docs/RESPONSIBLE-TECH-AUDITS.md`; DPIA in `docs/audits/dpia.md` |
+| Responsible Tech | ✅ | Audits A–F in `docs/RESPONSIBLE-TECH-AUDITS.md`; DPIA in [`docs/audits/dpia.md`](docs/audits/dpia.md) |
 
 No standard is a bare `N/A` — the one that is (AI Evaluation) carries its reason above.
 
@@ -115,8 +115,8 @@ your IP) and to whatever notification channel you configure (release titles and
 artist names go wherever you pointed it) — both are disclosure choices, not
 exceptions to "local-first." Your Plex token and any Apprise URLs are encrypted at
 rest. Nothing is sent anywhere else, ever. Full data inventory and threat model in
-[`docs/RESPONSIBLE-TECH-AUDITS.md`](docs/RESPONSIBLE-TECH-AUDITS.md) and
-`docs/audits/dpia.md`.
+[`docs/RESPONSIBLE-TECH-AUDITS.md`](docs/RESPONSIBLE-TECH-AUDITS.md) and the
+[DPIA](docs/audits/dpia.md).
 
 MusicBrainz and ListenBrainz are free, donation-funded infrastructure run by the
 MetaBrainz Foundation. If Encore is useful to you, please consider
@@ -126,7 +126,9 @@ is independent load on a project that isn't charging you for it.
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the merge gate, commit style, and ADR
-process, and [`SECURITY.md`](SECURITY.md) to report a vulnerability.
+process, and [`SECURITY.md`](SECURITY.md) to report a vulnerability. Supported
+versions (REL-24): `main` and the latest tag only, pre-1.0 — see
+[`SECURITY.md`](SECURITY.md#supported-versions) for the table.
 
 ## License
 

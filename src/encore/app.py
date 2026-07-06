@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from encore import __version__
+
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="encore", version="0.1.0")
+    app = FastAPI(title="encore", version=__version__)
 
     @app.get("/livez")
     def livez() -> dict[str, str]:
