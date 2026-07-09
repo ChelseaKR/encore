@@ -1,13 +1,12 @@
-# CodeQL SAST (SEC-08: CodeQL nightly + on-PR for changed code; CICD-20 adds the
+# CodeQL SAST (SEC-08: CodeQL weekly + on-main for changed code; CICD-20 adds the
 # `actions` language pack so the workflow YAML itself is analyzed, not just Python).
 name: codeql
 
 on:
   push:
     branches: [main]
-  pull_request:
   schedule:
-    - cron: "0 7 * * *"  # nightly, staggered off the hour
+    - cron: "0 7 * * 1"  # weekly, staggered off the hour
 
 permissions:
   contents: read
