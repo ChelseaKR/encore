@@ -8,6 +8,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Gate top-ups (2026-07-09).** `make verify` grew four gates: `osv-scanner`
+  against `uv.lock` as the second dependency-scan engine beside pip-audit
+  (SEC-11/13, roadmap B5); `make slo-check` schema-validating `slos/*.yaml`
+  against the Observability Standard §4 shape (OBS-14, B6 part 1 —
+  `scripts/validate_slos.py`); `make citation-check` (pinned `cffconvert
+  --validate`, DOC-08, B10); and `make wheel` (`uv build`, CQ-10, B7 — the
+  container is no longer the only build artifact). `release.yml`'s
+  `verify-at-tag` now also refuses to release a tag whose `CHANGELOG.md` lacks
+  a matching `## [X.Y.Z]` section (REL-10, B11). ruff's pydocstyle (`D`, pep257
+  convention) joined the lint gate (CQ-31, B9). `PyYAML`/`types-PyYAML` added
+  to the dev dependency group for the SLO validator.
+
 - **Project scaffolding (M0).** Apache-2.0 license, standards conformance from day
   zero (CI-fetch of the portfolio's private `portfolio-standards`, pinned to
   `v1.0.1`), ADRs 0000–0008, `docs/ROADMAP.md` metrics ledger,
@@ -32,6 +44,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `SECURITY.md` now leads with the email reporting channel: GitHub private
+  vulnerability reporting is non-functional on a private free-plan repo
+  (DOC-09, B13) — reorder back when the repo flips public. Its phantom
+  `tests/fixtures/` reference now points at `tests/` until real fixture trees
+  land with F1.
+- `codeql.yml`'s header comment and `docs/ROADMAP.md`'s §7 ledger now state the
+  workflow's real trigger state (dispatch-only while GitHub Actions billing is
+  broken) instead of the pre-billing "nightly + PR" claim; `docs/ROADMAP.md`
+  §11 gained an explicit `### Observability` subheading (OBS-21, B12).
 - CI (`ci.yml`) and the release gate (`release.yml`) now install via
   `uv sync --frozen` and run the actual `make` targets (`make install`,
   `make lint`, `make type`, `make cov`, `make security`, and — for

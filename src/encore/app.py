@@ -14,6 +14,7 @@ from encore import __version__
 
 
 def create_app() -> FastAPI:
+    """Build the FastAPI application with the M0 health endpoints."""
     app = FastAPI(title="encore", version=__version__)
 
     @app.get("/livez")
