@@ -1,4 +1,4 @@
-# CodeQL SAST (SEC-08: CodeQL nightly + on-PR for changed code; CICD-20 adds the
+# CodeQL SAST (SEC-08: CodeQL weekly + on-PR for changed code; CICD-20 adds the
 # `actions` language pack so the workflow YAML itself is analyzed, not just Python).
 name: codeql
 
