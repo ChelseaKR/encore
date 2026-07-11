@@ -6,7 +6,7 @@ This file is a plain-language map of the project as it exists on `main`. It does
 
 ## What This Project Is
 
-Encore is a self-hosted release watcher for Plex music libraries. It reads the artists someone already has, matches them to MusicBrainz, watches for new releases, and can recommend related artists without downloading music.
+Encore is a self-hosted release watcher for Plex music libraries. It will read the artists someone already has, match them to MusicBrainz, watch for new releases, and recommend related artists — all without downloading music. Every one of those product features is currently planned, not built: what exists on `main` today is the FastAPI/CLI scaffold with health endpoints (see *What It Covers* and *Outside This Scope*).
 
 Package metadata checked in this pass:
 

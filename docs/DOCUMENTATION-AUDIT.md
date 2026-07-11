@@ -12,8 +12,8 @@ This audit records the documentation sweep and remediation loop for this reposit
 | Security/process docs | pass | CONTRIBUTING.md, SECURITY.md, CHANGELOG.md |
 | Architecture/planning docs | pass | 12 architecture/interface docs; 1 planning/research docs |
 | Safety/privacy/audit docs | pass | 3 safety/privacy/accessibility/audit docs |
-| Validation surface | pass | 2 test files; 5 workflow files |
-| Local doc links | pass | 37 authored-doc links checked; 0 unresolved |
+| Validation surface | pass | 3 test files (2 test modules + `tests/__init__.py` — same counting rule as `docs/PROJECT-SCOPE.md`); 5 workflow files |
+| Local doc links | pass | 0 unresolved after review remediation — see *Link Check* below for the case-sensitivity correction |
 
 ## Root-Level Documentation Audit
 
@@ -122,8 +122,14 @@ Full hand-authored doc inventory checked by this pass:
 
 ## Link Check
 
-- Checked 37 local links in authored Markdown and MDX docs.
-- Unresolved authored-doc links after remediation: 0.
+- The original 2026-07-08 pass checked 37 local links in authored Markdown and
+  MDX docs and reported 0 unresolved — but it ran on a case-insensitive
+  filesystem (macOS), which masked one broken link: `docs/README.md` linked
+  `roadmap.md` where only `docs/ROADMAP.md` exists, a 404 on GitHub's
+  case-sensitive rendering.
+- Review remediation (2026-07-11) removed that duplicate link and re-ran the
+  check case-sensitively against the git index (which records exact case):
+  every remaining relative link in authored docs resolves; 0 unresolved.
 - Root-level/template unresolved links after remediation: 0.
 
 ## Validation Notes

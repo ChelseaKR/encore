@@ -13,7 +13,6 @@ This index is the handoff point for the documentation sweep last reviewed on 202
 - [Project Scope](PROJECT-SCOPE.md)
 - [Documentation Audit](DOCUMENTATION-AUDIT.md)
 - [Roadmap](ROADMAP.md)
-- [Roadmap](roadmap.md)
 - [Responsible Tech Audits](RESPONSIBLE-TECH-AUDITS.md)
 - [Security](../SECURITY.md)
 - [Contributing](../CONTRIBUTING.md)
