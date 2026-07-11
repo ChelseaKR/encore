@@ -55,8 +55,8 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | mypy --strict errors | AUTO (CQ-06) | 0 | 3 | Met |
 | ruff (format+lint) | AUTO (CQ-04) | 0 findings | 1–2 | Met |
 | Semgrep HIGH/CRIT | AUTO (SEC-07) | 0 | 5 | Not yet wired — Semgrep join CI when there's non-trivial application logic to scan (tracked, not silently dropped) |
-| Fixable HIGH/CRIT vulns (pip-audit) | AUTO (SEC-11) | 0 | 5 | Met (wired) |
-| CodeQL | AUTO (SEC-08) | 0 alerts | 5 | Met (wired, nightly + PR) |
+| Fixable HIGH/CRIT vulns (pip-audit + osv-scanner) | AUTO (SEC-11/13) | 0 | 5 | Met (both engines wired 2026-07-09 — pip-audit on the locked env, osv-scanner on `uv.lock`) |
+| CodeQL | AUTO (SEC-08) | 0 alerts | 5 | Wired but **dispatch-only** while GitHub Actions billing is broken (roadmap B1/U6); push-to-main + weekly schedule get restored at CI proof-of-life |
 | Secret scan (gitleaks) | AUTO (SEC-17/18) | clean | 5 | Met (pre-commit + CI) |
 | Scorecard aggregate | AUTO (SEC-37) | ≥8 | 5 | Not yet run — requires a public repo; deferred to the public/private flip |
 | Lighthouse a11y | AUTO (A11Y-02) | ≥0.95 | 6 | **N/A at M0** — no UI surface exists yet; applies from M2 (first real UI) |
@@ -67,7 +67,11 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
 | Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
 | Workflow SAST (zizmor) | AUTO (CICD-19) | 0 findings | 5 | Met (wired 2026-07-05, `ci.yml`) |
-| CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Met (wired 2026-07-05, `codeql.yml`) |
+| CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Wired 2026-07-05 (`codeql.yml`); same dispatch-only caveat as the CodeQL row above |
+| SLO schema (`slos/*.yaml`) | AUTO (OBS-14) | conforms | 4 | Met — `make slo-check` (`scripts/validate_slos.py`, wired 2026-07-09); the SLI query itself stays a documented placeholder until the F3 poller exists (M2) |
+| CITATION.cff validity | AUTO (DOC-08) | valid | 4 | Met — `make citation-check` (pinned cffconvert via uvx, wired 2026-07-09) |
+| Wheel/sdist build | AUTO (CQ-10) | builds | 9 | Met — `make wheel` (`uv build`) in `make verify` + CI (wired 2026-07-09); container is no longer the only artifact |
+| CHANGELOG section at tag | AUTO (REL-10) | present | 9 | Met — grep gate in `release.yml` `verify-at-tag` (wired 2026-07-09); fires at first tag |
 | Full-history secret scan (TruffleHog, verified) | AUTO (SEC-19) | 0 verified | 5 | Met — weekly, `.github/workflows/trufflehog.yml` (wired 2026-07-05) |
 | CI egress policy (Harden-Runner) | AUTO (SEC-04) | audit today | 1–9 | Met at `audit` — every workflow; flips to `block` once the steady-state endpoint allowlist is known from a few runs' telemetry |
 | MB rate-limit violations (soak counter) | AUTO (project) | 0 | 4 | N/A — no polling code exists yet; applies from M2 |
@@ -116,13 +120,16 @@ statute.
 
 ## 11. Operations & sustainability
 
+### Observability
+
 **Observability tier: A** (this is a running, self-hosted service, not a CLI/library
 — `../encore-plans/04-architecture.md` §deployment & operations). `/livez` and
 `/readyz` exist today (`src/encore/app.py`); `readyz` gains real DB/scheduler
 heartbeat checks at M1. Structured JSON logs with secret/PII redaction, RED metrics
 per route, and `slos/encore.yaml` (poll-freshness SLO) are specified now and
 instantiated as the routes and pollers they measure land (M1–M2) — see
-`slos/encore.yaml` for the declared target.
+`slos/encore.yaml` for the declared target, schema-validated on every `make verify`
+(`make slo-check`, OBS-14).
 
 ## 12. Responsible-tech summary
 

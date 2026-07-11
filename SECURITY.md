@@ -18,19 +18,21 @@ for advisories.
 
 ## Reporting a vulnerability
 
-**Use GitHub's private vulnerability reporting** ("Report a vulnerability" under the
-repository's *Security* tab). If you cannot use it, email **ckellyreif@gmail.com**
-with `encore security` in the subject. Expect an acknowledgement within a few days;
-this is a volunteer project, so please be patient and do not disclose publicly until
-a fix is available.
+**Email ckellyreif@gmail.com** with `encore security` in the subject — this is the
+primary channel today: the repo is private, and GitHub's private vulnerability
+reporting ("Report a vulnerability" under the *Security* tab) is not functional on
+a private free-plan repo. Once the repo is public, GitHub PVR becomes the preferred
+channel and this section will be reordered (tracked in the roadmap, DOC-09).
+Expect an acknowledgement within a few days; this is a volunteer project, so please
+be patient and do not disclose publicly until a fix is available.
 
 ### Redaction-safe reporting (please read)
 
 When you report a bug or a security issue, **never paste a real Plex token, a real
 Apprise/notification-channel URL, or real listening/taste data.** If a flaw exposes
 one of these, describe the *shape* of the leak — "the token appears in the DEBUG log
-line on route X" — and reproduce it with the synthetic fixtures in
-`tests/fixtures/`, which carry sentinel values designed exactly for this.
+line on route X" — and reproduce it with the synthetic sentinel fixtures that live
+under `tests/` (never with real values).
 
 ## What we consider a vulnerability
 
