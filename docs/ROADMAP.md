@@ -124,8 +124,9 @@ statute.
 
 **Observability tier: A** (this is a running, self-hosted service, not a CLI/library
 — `../encore-plans/04-architecture.md` §deployment & operations). `/livez` and
-`/readyz` exist today (`src/encore/app.py`); `readyz` gains real DB/scheduler
-heartbeat checks at M1. Structured JSON logs with secret/PII redaction, RED metrics
+`/readyz` exist today (`src/encore/app.py`); `readyz` performs a real database
+probe since F0 (M1, 2026-07-11) and gains the scheduler-heartbeat check at M2
+with the first poller. Structured JSON logs with secret/PII redaction, RED metrics
 per route, and `slos/encore.yaml` (poll-freshness SLO) are specified now and
 instantiated as the routes and pollers they measure land (M1–M2) — see
 `slos/encore.yaml` for the declared target, schema-validated on every `make verify`

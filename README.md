@@ -7,7 +7,8 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · scaffold (`M0`) · independent personal open-source project ·
+**Status:** pre-alpha · `M1` in progress (F0 storage layer landed; no Plex sync or
+product features yet) · independent personal open-source project ·
 Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
 client material.
 
@@ -56,6 +57,9 @@ encore/
 │   ├── app.py                 # FastAPI app factory — health endpoints today,
 │   │                          #   the htmx UI + JSON API as features land
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
+│   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
+│   ├── models.py              # SQLModel tables — the settings singleton today
+│   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── plex/                  # read-only Plex client wrapper (F1)                 [M1]
 │   ├── matching/               # MusicBrainz identity matching + review queue (F2)  [M1]
 │   ├── watch/                  # release-group polling + diffing (F3)               [M2]

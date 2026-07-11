@@ -8,6 +8,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **F0 storage & secrets layer (M1, 2026-07-11).** SQLite (WAL) via SQLModel in a
+  single data directory (`src/encore/storage.py`), with ordered forward
+  migrations tracked in `PRAGMA user_version`; a Fernet key file created 0600
+  beside the database encrypting secret-bearing columns at rest
+  (`src/encore/secretstore.py`, docs/adr/0008) — proven by a test that greps
+  the raw database bytes for the plaintext token; the `settings` singleton
+  table holding the Plex base URL + encrypted token (`src/encore/models.py`).
+  `encore serve --data-dir` is back and wired for real this time (explicit
+  flag > `$ENCORE_DATA_DIR` > `./data`), the Dockerfile `CMD` passes
+  `--data-dir /data` again, and `/readyz` performs an actual database probe
+  instead of returning a literal. Scope honesty: no Plex sync, matching, or
+  scheduler yet — this is the prerequisite layer F1/F2 build on.
+
 - **Gate top-ups (2026-07-09).** `make verify` grew four gates: `osv-scanner`
   against `uv.lock` as the second dependency-scan engine beside pip-audit
   (SEC-11/13, roadmap B5); `make slo-check` schema-validating `slos/*.yaml`
