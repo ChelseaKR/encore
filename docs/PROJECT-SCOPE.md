@@ -1,12 +1,12 @@
 # Project Scope
 
-Last reviewed: 2026-07-08. Base branch: `main`.
+Last reviewed: 2026-07-11. Base branch: `main`.
 
 This file is a plain-language map of the project as it exists on `main`. It does not replace the README, roadmap, audit docs, or source comments. It points to them so a reviewer can see the whole shape without reading every file first.
 
 ## What This Project Is
 
-Encore is a self-hosted release watcher for Plex music libraries. It will read the artists someone already has, match them to MusicBrainz, watch for new releases, and recommend related artists — all without downloading music. Every one of those product features is currently planned, not built: what exists on `main` today is the FastAPI/CLI scaffold with health endpoints (see *What It Covers* and *Outside This Scope*).
+Encore is a self-hosted release watcher for Plex music libraries. It will read the artists someone already has, match them to MusicBrainz, watch for new releases, and recommend related artists — all without downloading music. Every one of those product features is currently planned, not built: what exists on `main` today is the FastAPI/CLI scaffold with health endpoints plus the F0 storage layer (SQLite with migrations, Fernet secrets-at-rest, a settings table that can hold Plex credentials — no code reads from Plex yet; see *What It Covers* and *Outside This Scope*).
 
 Package metadata checked in this pass:
 
@@ -21,6 +21,7 @@ Package metadata checked in this pass:
 ## What It Covers
 
 - A FastAPI app and CLI scaffold.
+- A storage layer (F0): SQLite in WAL mode via SQLModel, ordered forward migrations, and Fernet encryption at rest for the Plex token, with the key file beside the database.
 - Planned read-only Plex sync, MusicBrainz matching, release polling, notifications, RSS, iCal, and ListenBrainz recommendations.
 - ADRs covering polling, metadata source choices, UI, SQLite, matching, secrets, and support posture.
 - SLO, security, roadmap, i18n, and responsible-tech docs.
@@ -28,11 +29,11 @@ Package metadata checked in this pass:
 
 ## How It Is Put Together
 
-- src/encore/ currently contains the app factory and CLI entry point.
+- src/encore/ contains the app factory, CLI entry point, and the storage layer (`storage.py`, `models.py`, `secretstore.py`).
 - docs/adr/ records the planned design decisions.
 - slos/ contains service-level declarations.
-- tests/ verifies the scaffolded app and CLI.
-- The Dockerfile is the future one-container install path.
+- tests/ verifies the app, CLI, storage/migrations, and the encrypted-at-rest guarantee.
+- The Dockerfile is the one-container install path (`--data-dir /data` on a mounted volume).
 
 Observed source and operations surfaces:
 
@@ -65,7 +66,7 @@ GitHub workflow files checked:
 
 ## Docs And Evidence Checked
 
-This pass checked 24 hand-authored doc or metadata files, 3 test files, and 5 workflow files on `main`. The count excludes vendored provider licenses, dependency folders, generated cache files, and large generated artifact history.
+This pass checked 24 hand-authored doc or metadata files, 5 test files, and 5 workflow files on `main`. The count excludes vendored provider licenses, dependency folders, generated cache files, and large generated artifact history.
 
 Primary docs checked:
 
@@ -99,7 +100,9 @@ Representative test files checked:
 - `tests/__init__.py`
 - `tests/test_app.py`
 - `tests/test_cli.py`
+- `tests/test_secrets_at_rest.py`
+- `tests/test_storage.py`
 
 ## Validation Notes
 
-For this docs PR, validation means the scope file was generated from the clean `origin/main` worktree, reviewed against repo metadata and docs inventory, and checked with `git diff --check`. Project test suites are still the authority for code behavior, because this PR changes documentation only.
+This file was generated from the clean `origin/main` worktree for the 2026-07-08 docs audit and re-reviewed 2026-07-11 alongside the F0 storage-layer PR (the code-state and test-file sections above were updated to match). Project test suites are the authority for code behavior; `make verify` on the PR branch is the gate that proves the claims in *What It Covers*.

@@ -17,6 +17,6 @@ ENV OTEL_SERVICE_NAME=encore
 VOLUME ["/data"]
 EXPOSE 8321
 ENTRYPOINT ["encore"]
-# No --data-dir: the CLI doesn't parse it yet (src/encore/cli.py) — there is no
-# storage layer to point at until M1. Re-add it here the same PR that wires it.
-CMD ["serve", "--host", "0.0.0.0", "--port", "8321"]
+# --data-dir points at the mounted volume: the F0 storage layer keeps the SQLite
+# database and its Fernet key file there (docs/adr/0005, docs/adr/0008).
+CMD ["serve", "--host", "0.0.0.0", "--port", "8321", "--data-dir", "/data"]

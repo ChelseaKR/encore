@@ -6,7 +6,13 @@ of what M0 already knows about the product's data — the health-check scaffold
 plus the F1-F5 design committed in `docs/adr/`.
 
 **Owner:** Chelsea Kelly-Reif (sole maintainer and controller — see §5).
-**Date:** 2026-07-05.
+**Date:** 2026-07-05. **F0 update (2026-07-11):** the storage layer now exists —
+the "Plex base URL + token" inventory row below is implemented exactly as
+designed (SQLite, Fernet-encrypted at rest, key file beside the database,
+proven by a raw-bytes grep test in `tests/test_secrets_at_rest.py`). No new
+data class and no new outbound flow was added, so the inventory itself is
+unchanged; the full regeneration against the real schema remains due at M1
+exit as stated above.
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14
