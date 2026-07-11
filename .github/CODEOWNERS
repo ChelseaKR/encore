@@ -16,7 +16,9 @@
 # a Plex token/Apprise URL or let Encore write to someone's Plex server
 # (04-architecture.md §Plex integration constraints; hard non-goal in README).
 /src/encore/plex/                      @ChelseaKR
-/src/encore/secrets.py                 @ChelseaKR
+/src/encore/secretstore.py             @ChelseaKR
+/src/encore/models.py                  @ChelseaKR
+/src/encore/storage.py                 @ChelseaKR
 
 # Identity matching thresholds — the correctness keystone (R1 in
 # docs/adr/0006-mbid-matching-with-review-queue.md); every downstream feature
