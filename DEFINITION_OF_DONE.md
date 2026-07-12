@@ -8,10 +8,11 @@ floors, the gate model, the security posture) lives once in the portfolio's priv
 target values live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 > **The one command that proves it:** `make verify` reproduces the full CI gate set
-> locally — `format+lint · type · test (≥85% branch) · security`, plus a11y once the
-> UI exists (M2) and the no-outing/read-only-Plex guards once Plex sync exists (M1).
-> A change is not done until `make verify` is green. A *milestone* is not done until
-> it is green on `main`.
+> locally — `format+lint · type · test (≥85% branch) · security · todo-gate`, plus
+> a11y once the UI exists (M2) and the no-outing/read-only-Plex guards once Plex
+> sync exists (M1). It is the same command `ci.yml` and `release.yml` invoke, not a
+> parallel reimplementation. A change is not done until `make verify` is green. A
+> *milestone* is not done until it is green on `main`.
 
 ## Acceptance criteria (every PR)
 
@@ -42,8 +43,8 @@ target values live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ### Security and supply chain
 - [ ] `make security` clean (pip-audit; gitleaks); no secrets committed;
-      dependencies on the pinned lock. CodeQL and Trivy (once a Dockerfile ships
-      real code) stay green in CI.
+      dependencies on the pinned lock. CodeQL (python + actions), zizmor, and
+      Trivy (every container build, not just at release) stay green in CI.
 
 ### Rate-budget discipline (from M2, once release watching exists)
 - [ ] Any change touching the MusicBrainz/ListenBrainz client respects the shared

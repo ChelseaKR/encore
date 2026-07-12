@@ -1,5 +1,10 @@
 # Responsible-Tech Audits — encore
 
+> **Last verified: 2026-07-05 · Recheck cadence: at each milestone exit**, matching
+> `docs/ROADMAP.md`'s own cadence note (DOC-15). Each section below carries its own
+> sign-off date; re-date a section when its content is substantively re-reviewed,
+> not on every unrelated repo edit.
+
 Instantiates the portfolio's private `RESPONSIBLE-TECH-FRAMEWORK.md` (fetched at CI
 time, never committed here). The interesting finding behind this document: a music
 *taste* product is quietly a *sensitive-inference* product — what someone listens to
@@ -29,6 +34,7 @@ rather than discovering it after a leak. Source planning material:
 - **Kill-switch:** stop the container. All data stays on the user's own disk; there
   is no remote component to keep running.
 - **Accountable owner:** Chelsea Kelly-Reif (RTF-01).
+- **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
 
 ## B. Bias & fairness
 
@@ -47,12 +53,14 @@ rather than discovering it after a leak. Source planning material:
   correlates with what you already have. **Auto-gated:** the identity-inference guard
   test (from M3, when F7 lands). **Review-gated:** any feature proposal that scores
   or segments users by inferred traits is rejected at design time, not fixed post-hoc.
+- **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
 
 ## C. Privacy & data-protection
 
-- **Data inventory:** see the DPIA table below (`docs/audits/dpia.md` will hold the
-  full regenerated version once schema exists; the table here is the M0 source of
-  truth).
+- **Data inventory:** see the DPIA table below; `docs/audits/dpia.md` holds the full
+  assessment (necessity, legal basis, risk, mitigation) built from this table as its
+  M0 seed. It's regenerated against the real schema at M1, once one exists to
+  regenerate it against — see that file's own "Recheck trigger."
 - **Handling:** local-first — everything lives in Encore's own SQLite file. Outbound
   calls are purpose-bound: artist names/MBIDs to MusicBrainz/ListenBrainz (matching,
   watching, recommendations), and whatever the user configures to their own
@@ -79,6 +87,8 @@ rather than discovering it after a leak. Source planning material:
 Not collected, ever: telemetry, analytics, crash reports to third parties, accounts,
 email addresses (beyond a user-supplied SMTP target), music files.
 
+- **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
+
 ## D. Transparency & explainability
 
 - **In the product:** recommendation provenance shown in-UI once F7 ships ("similar
@@ -91,6 +101,7 @@ email addresses (beyond a user-supplied SMTP target), music files.
   (this is a documentation commitment, not a mechanically-testable one).
   **Review-gated:** any PR touching an outbound call or a notification payload is
   checked against this section.
+- **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
 
 ## E. Accessibility (WCAG 2.2 AA)
 
@@ -104,6 +115,7 @@ email addresses (beyond a user-supplied SMTP target), music files.
   fails its own thesis. **Auto-gated:** axe/pa11y-ci/Lighthouse in CI, merge-blocking
   from M2. **Review-gated:** an NVDA+VoiceOver walkthrough per release, recorded in
   an accessibility statement at `docs/a11y/STATEMENT.md` (from M4).
+- **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
 
 ## F. Security
 
@@ -112,28 +124,45 @@ email addresses (beyond a user-supplied SMTP target), music files.
   feed landing somewhere visible to them; (2) a token thief (stolen backup, stolen
   disk) — countered by encryption at rest with the boundary stated honestly
   (`docs/adr/0008`); (3) the developer — countered structurally, since no telemetry
-  endpoint exists to exfiltrate to, and CI itself runs with deny-by-default egress.
+  endpoint exists to exfiltrate to, and CI runs `step-security/harden-runner` in
+  **audit** mode on every workflow (SEC-04), logging egress rather than yet
+  blocking it. Audit, not enforce, is the honest word today: it flips to
+  `egress-policy: block` with an explicit allowlist once a few runs establish the
+  steady-state endpoint set — tracked in each workflow's own comment, not asserted
+  here ahead of the config actually doing it.
 - **Controls:** ASVS **L2** (Encore stores a credential granting full Plex access
-  plus sensitive taste data) — Semgrep zero HIGH/CRIT, CodeQL, pip-audit, gitleaks,
-  Trivy on the Dockerfile, keyless cosign + SLSA provenance on release, Scorecard
-  ≥8 once public. See `README.md` §standards conformance for what's wired today vs.
-  what activates at which milestone.
+  plus sensitive taste data) — Semgrep zero HIGH/CRIT (deferred, ROADMAP §7),
+  CodeQL (python + actions), pip-audit, gitleaks (pre-commit + CI + a weekly
+  full-history TruffleHog sweep), zizmor for the workflows themselves, Trivy on
+  every container build (not just at release — see ci.yml Stage 9), keyless cosign
+  + SLSA provenance on release (M4), Scorecard ≥8 once public. See `README.md`
+  §standards conformance for what's wired today vs. what activates at which
+  milestone.
+- **VEX policy:** no unfixable HIGH/CRITICAL vulnerability exists today (`pip-audit`
+  and Trivy are both clean as of this sign-off). On first occurrence of one, a
+  CycloneDX 1.7 `vex.json` is committed alongside the affected release, stating the
+  justification (`not_affected`/`affected`/`fixed`/`under_investigation` per the
+  VEX spec) and is reviewed quarterly thereafter (SEC-40).
 - **Residual-risk register:** not yet instantiated (`docs/audits/residual-risk.md`)
   — there is no feature code yet to carry residual risk. Created at M1 alongside the
   first Plex-touching code. **Auto-gated:** the security CI stage (wired from M0).
   **Review-gated:** the residual-risk register is reviewed at each milestone exit.
+- **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
 
 ---
 
 ## Committed artifacts
 
-- `docs/audits/dpia.md` — full DPIA (data inventory above is the M0 seed; this file
-  is created when the schema exists to regenerate it against, M1)
+- `docs/audits/dpia.md` — full DPIA, committed at M0 as a real (if narrow)
+  assessment against the ADR-level design; regenerated against the actual schema
+  at M1
 - `docs/audits/security-threat-model.md` — expanded from §F above (M1)
 - `docs/audits/residual-risk.md` — created at M1
 - `docs/a11y/STATEMENT.md` — accessibility conformance statement (M4)
 
 No LLM exists in this product, so RTF-09..15 (AI risk register, EU AI Act
 classification, model cards) are **N/A-with-reason** until F14 (optional "vibe"
-recommendations, deliberately last — `docs/adr` will gain a new entry the day an LLM
-SDK import lands, per `../encore-plans/05-standards-alignment.md` §AI-eval).
+recommendations, deliberately last — the N/A decision and its flip trigger are
+recorded in `docs/adr/0009-ai-evaluation-not-applicable.md`; `docs/adr` gains a
+new, superseding entry the day an LLM SDK import actually lands, per
+`../encore-plans/05-standards-alignment.md` §AI-eval).

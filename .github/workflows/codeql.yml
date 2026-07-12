@@ -1,4 +1,5 @@
-# CodeQL SAST (SEC-08: CodeQL nightly + on-PR for changed code).
+# CodeQL SAST (SEC-08: CodeQL nightly + on-PR for changed code; CICD-20 adds the
+# `actions` language pack so the workflow YAML itself is analyzed, not just Python).
 name: codeql
 
 on:
@@ -6,7 +7,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 7 * * *"  # nightly, staggered off the hour
+    - cron: "0 7 * * 1"  # weekly, staggered off the hour
 
 permissions:
   contents: read
@@ -17,16 +18,27 @@ concurrency:
 
 jobs:
   analyze:
-    name: analyze (python)
+    name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, actions]
     permissions:
       contents: read
       security-events: write
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+          disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
       - uses: github/codeql-action/init@f09c1c0a94de965c15400f5634aa42fac8fb8f88  # v3.28.19
         with:
-          languages: python
+          languages: ${{ matrix.language }}
       - uses: github/codeql-action/analyze@f09c1c0a94de965c15400f5634aa42fac8fb8f88  # v3.28.19
         with:
-          category: "/language:python"
+          category: "/language:${{ matrix.language }}"
