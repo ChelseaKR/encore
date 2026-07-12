@@ -10,6 +10,8 @@ name: codeql
 
 on:
   workflow_dispatch: {}
+  schedule:
+    - cron: '29 3 * * 2' # weekly — re-armed 2026-07-11 (metrics plan Phase 0.2)
 
 permissions:
   contents: read
@@ -44,3 +46,16 @@ jobs:
       - uses: github/codeql-action/analyze@f09c1c0a94de965c15400f5634aa42fac8fb8f88  # v3.28.19
         with:
           category: "/language:${{ matrix.language }}"
+          # No GHAS code scanning on this private repo — findings are checked in-run below.
+          upload: never
+          output: codeql-results
+
+      - name: Fail on findings (no GHAS on this private repo; SARIF checked in-run)
+        shell: bash
+        run: |
+          count=$(jq -s '[.[] | .runs[]?.results[]?] | length' codeql-results/*.sarif)
+          echo "CodeQL findings: ${count}"
+          if [ "${count:-0}" -gt 0 ]; then
+            jq -r '.runs[]?.results[]? | "\(.ruleId // "rule"): \(.locations[0].physicalLocation.artifactLocation.uri // "?"):\(.locations[0].physicalLocation.region.startLine // 0)"' codeql-results/*.sarif
+            exit 1
+          fi
