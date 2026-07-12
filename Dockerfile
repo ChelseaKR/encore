@@ -7,7 +7,13 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 
 FROM python:3.12-slim
-RUN useradd --create-home --uid 10001 encore
+# Create /data (the documented volume mountpoint, README §install) owned by the
+# app user BEFORE the VOLUME declaration: a named volume initialized from a
+# mountpoint that doesn't exist in the image is created root-owned, and the
+# non-root `encore` user (uid 10001) can never write to it.
+RUN useradd --create-home --uid 10001 encore \
+    && mkdir -p /data \
+    && chown encore:encore /data
 COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=build /usr/local/bin/encore /usr/local/bin/encore
 USER encore
