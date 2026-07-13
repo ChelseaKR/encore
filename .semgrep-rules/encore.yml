@@ -1,0 +1,15 @@
+rules:
+  - id: encore.no-sensitive-values-in-logs
+    message: >-
+      Do not pass credentials or sensitive taste fields to logs. Emit only
+      non-sensitive operational metadata and prove it with a sentinel test.
+    severity: ERROR
+    languages: [python]
+    patterns:
+      - pattern: $LOGGER.$METHOD(..., $SENSITIVE, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: '^(debug|info|warning|error|exception|critical|log)$'
+      - metavariable-regex:
+          metavariable: $SENSITIVE
+          regex: '(?i).*(token|secret|password|credential|play_count|rating|taste).*'

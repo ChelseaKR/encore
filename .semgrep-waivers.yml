@@ -1,0 +1,5 @@
+# SEC-10 waiver ledger. `make security` disables inline `nosemgrep`, so a finding
+# cannot disappear inside source. Any future exception must be a scoped rule/path
+# exclusion plus a matching, time-bounded entry here, reviewed at the next milestone.
+schema_version: 1
+waivers: []

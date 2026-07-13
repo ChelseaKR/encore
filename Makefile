@@ -29,10 +29,14 @@ test: ## Run the test suite
 cov: ## Run tests with a coverage report (branch >=85% — CQ-08)
 	uv run pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=85
 
-security: ## Dependency + secret scan (SEC-11/13/17) — audits the *locked* env
+security: ## SAST + dependency + secret scans (SEC-07/11/13/17)
 	uv run pip-audit
 	osv-scanner scan source --lockfile uv.lock
 	gitleaks detect --source . --config .gitleaks.toml --no-banner --redact
+	uvx --from semgrep==1.166.0 semgrep scan \
+		--config .semgrep-rules --config p/default --config p/python \
+		--severity ERROR --error --metrics off --disable-nosem src tests
+	uvx --from semgrep==1.166.0 semgrep test .semgrep-rules
 
 slo-check: ## Validate slos/*.yaml against the Observability Standard §4 schema (OBS-14)
 	uv run python scripts/validate_slos.py slos/

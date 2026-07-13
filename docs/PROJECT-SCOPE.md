@@ -66,7 +66,8 @@ GitHub workflow files checked:
 
 ## Docs And Evidence Checked
 
-This pass checked 24 hand-authored doc or metadata files, 5 test files, and 5 workflow files on `main`. The count excludes vendored provider licenses, dependency folders, generated cache files, and large generated artifact history.
+This pass checked the hand-authored docs and metadata, the test suite, and all
+workflow files on `main`. Generated caches and build artifacts are excluded.
 
 Primary docs checked:
 
@@ -94,6 +95,8 @@ Primary docs checked:
 - `docs/adr/0010-branch-protection-deferred-private-repo.md`
 - `docs/adr/template.md`
 - `docs/audits/dpia.md`
+- `docs/audits/residual-risk.md`
+- `docs/audits/security-threat-model.md`
 
 Representative test files checked:
 

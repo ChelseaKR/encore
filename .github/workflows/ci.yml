@@ -11,7 +11,7 @@ name: ci
 #
 # Stage numbering follows STANDARDS/CI-CD-STANDARD.md §1 (the canonical pipeline):
 #   1 format · 2 lint · 3 type · 4 test · 5 security · 6 a11y · 7 perf · 8 responsible · 9 build
-# At M0 (empty src-layout scaffold, no feature code) stages 6/7/8 are N/A-with-reason —
+# In the current F0 storage state, stages 6/7/8 are N/A-with-reason —
 # recorded in docs/ROADMAP.md's metrics ledger, not silently skipped. They go live at the
 # milestone that introduces the surface they gate: 6 (a11y) at M2 (first real UI), 8
 # (responsible: read-only-Plex + no-secrets-in-logs + no-outing guards) at M1 (Plex sync
@@ -84,7 +84,7 @@ jobs:
           path: coverage.xml
 
   security:
-    name: Stage 5 — security (pip-audit · osv-scanner · gitleaks)
+    name: Stage 5 — security (Semgrep · pip-audit · osv-scanner · gitleaks)
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
@@ -112,7 +112,7 @@ jobs:
           OSV=2.4.0
           curl -sSfL -o /usr/local/bin/osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV}/osv-scanner_linux_amd64"
           chmod +x /usr/local/bin/osv-scanner
-      - name: Vulnerable dependency scan (pip-audit + osv-scanner, locked env) + secret scan (gitleaks)
+      - name: SAST + dependency + secret scans (one local/CI/release target)
         # `make security` — the identical target `make verify` composes, run against
         # the frozen-synced env `uv.lock` describes (SEC-11/13), not a separately
         # pip-resolved one. osv-scanner reads `uv.lock` directly (second engine, B5).
