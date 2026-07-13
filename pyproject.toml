@@ -56,6 +56,8 @@ dev = [
     "ruff>=0.15",
     "mypy>=1.11",
     "pip-audit>=2.7",
+    "pyyaml>=6.0.3",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [project.urls]
@@ -80,8 +82,9 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 # Correctness + analyzability gates. E/F pyflakes, I import order, B bugbear,
 # UP pyupgrade, S bandit security, SIM simplify, RUF ruff-specific, C90 cyclomatic
-# complexity (CQ-05), TD/PGH forbid unlabelled TODOs and bare suppressions (CQ-34/35).
-select = ["E", "F", "I", "B", "UP", "S", "SIM", "RUF", "C90", "TD", "PGH"]
+# complexity (CQ-05), TD/PGH forbid unlabelled TODOs and bare suppressions (CQ-34/35),
+# D pydocstyle (CQ-31 — the docstrings existed, the gate didn't; enabled 2026-07-09).
+select = ["E", "F", "I", "B", "UP", "S", "SIM", "RUF", "C90", "TD", "PGH", "D"]
 ignore = [
     "E501",   # line length handled by the formatter
     "TD003",  # a milestone tag (M1/M2/M4) is an acceptable TODO reference here,
@@ -92,8 +95,14 @@ ignore = [
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # asserts are the point of a test
+"tests/*" = [
+    "S101",  # asserts are the point of a test
+    "D1",    # a test's name + body is its documentation; module docstrings still expected by convention
+]
 
 [tool.mypy]
 python_version = "3.12"

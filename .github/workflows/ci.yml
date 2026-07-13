@@ -68,6 +68,14 @@ jobs:
         run: make type
       - name: Stage 4 — test with coverage (branch >=85%)
         run: make cov
+      - name: SLO schema (OBS-14) + CITATION.cff (DOC-08) checks
+        if: matrix.python == '3.12'
+        run: |
+          make slo-check
+          make citation-check
+      - name: Wheel/sdist build (CQ-10) — the container is not the only artifact
+        if: matrix.python == '3.12'
+        run: make wheel
       - name: Upload coverage
         if: matrix.python == '3.12'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -76,7 +84,7 @@ jobs:
           path: coverage.xml
 
   security:
-    name: Stage 5 — security (pip-audit · gitleaks)
+    name: Stage 5 — security (pip-audit · osv-scanner · gitleaks)
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
@@ -99,10 +107,15 @@ jobs:
           GL=8.30.1
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" | tar -xz -C /usr/local/bin gitleaks
           chmod +x /usr/local/bin/gitleaks
-      - name: Vulnerable dependency scan (pip-audit, locked env) + secret scan (gitleaks)
+      - name: Install osv-scanner (pinned — second dependency-scan engine, SEC-11/13 B5)
+        run: |
+          OSV=2.4.0
+          curl -sSfL -o /usr/local/bin/osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV}/osv-scanner_linux_amd64"
+          chmod +x /usr/local/bin/osv-scanner
+      - name: Vulnerable dependency scan (pip-audit + osv-scanner, locked env) + secret scan (gitleaks)
         # `make security` — the identical target `make verify` composes, run against
         # the frozen-synced env `uv.lock` describes (SEC-11/13), not a separately
-        # pip-resolved one.
+        # pip-resolved one. osv-scanner reads `uv.lock` directly (second engine, B5).
         run: make security
 
   build:

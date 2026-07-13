@@ -21,9 +21,8 @@ under Apache-2.0.
 
 **Never paste a real Plex token, a real Apprise/notification-channel URL, or real
 listening/taste data into an issue, a pull request, a commit, a log, a screenshot, a
-test, or a fixture.** Reproduce bugs with the synthetic fixtures in
-[`tests/fixtures/`](tests/fixtures/) — sentinel artists and sentinel credentials
-built exactly for this. If a fixture you need doesn't exist yet, add a synthetic one
+test, or a fixture.** Reproduce bugs with the synthetic tests under
+[`tests/`](tests/) — use sentinel artists and sentinel credentials only. If a fixture you need doesn't exist yet, add a synthetic one
 rather than reaching for anything real.
 
 This is enforced socially in review and mechanically where possible: gitleaks in

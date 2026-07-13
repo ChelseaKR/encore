@@ -12,6 +12,7 @@ import uvicorn as uvicorn
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI arguments and dispatch the requested subcommand."""
     parser = argparse.ArgumentParser(prog="encore")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

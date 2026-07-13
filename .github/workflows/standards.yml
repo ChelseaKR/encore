@@ -12,8 +12,7 @@ name: standards
 # private-standards fetch (deploy key) would fail for external contributors once this
 # repo is public. The freshness gate is a maintainer concern, enforced on every push to main.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 # Least privilege: this job only reads. No write scope is granted to GITHUB_TOKEN.
 permissions:
