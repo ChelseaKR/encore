@@ -9,7 +9,9 @@ from typing import Any
 import pytest
 
 from encore import cli
-from encore.storage import DATA_DIR_ENV
+from encore.plex import PlexMusicClient
+from encore.storage import DATA_DIR_ENV, Storage
+from tests.plex_fixtures import FakeArtist, FakeLibrary, make_client_session
 
 
 def _capture_uvicorn(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
@@ -65,3 +67,108 @@ def test_serve_without_flag_keeps_env_precedence(
 def test_missing_command_errors() -> None:
     with pytest.raises(SystemExit):
         cli.main([])
+
+
+def test_plex_configure_stores_encrypted_credentials_and_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_token", lambda: "token-needle-configure")
+
+    exit_code = cli.main(
+        [
+            "plex",
+            "configure",
+            "--data-dir",
+            str(tmp_path),
+            "--base-url",
+            "http://plex.local:32400",
+            "--library",
+            "1",
+            "--library",
+            "3",
+        ]
+    )
+
+    assert exit_code == 0
+    storage = Storage(tmp_path)
+    assert storage.get_plex_credentials() == (
+        "http://plex.local:32400",
+        "token-needle-configure",
+    )
+    assert storage.get_plex_libraries() == ["1", "3"]
+    storage.close()
+    captured = capsys.readouterr()
+    assert "token-needle-configure" not in captured.out + captured.err
+
+
+def test_plex_configure_rejects_an_empty_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_token", lambda: "")
+
+    assert (
+        cli.main(
+            [
+                "plex",
+                "configure",
+                "--data-dir",
+                str(tmp_path),
+                "--base-url",
+                "http://plex.local:32400",
+            ]
+        )
+        == 2
+    )
+    assert "empty Plex token" in capsys.readouterr().err
+
+
+def test_sync_requires_configured_credentials(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["sync", "--data-dir", str(tmp_path)]) == 2
+    assert "no Plex credentials configured" in capsys.readouterr().err
+
+
+def test_sync_runs_the_real_inventory_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    storage = Storage(tmp_path)
+    storage.set_plex_credentials("http://plex.local:32400", "token-needle-sync")
+    storage.close()
+    session, base_url = make_client_session(
+        [FakeLibrary(key="1", title="Music", artists=[FakeArtist("101", "Stereolab")])]
+    )
+
+    def fixture_client(url: str, token: str) -> PlexMusicClient:
+        assert url == "http://plex.local:32400"
+        return PlexMusicClient(base_url, token, session=session)
+
+    monkeypatch.setattr(cli, "PlexMusicClient", fixture_client)
+
+    assert cli.main(["sync", "--data-dir", str(tmp_path), "--library", "1"]) == 0
+    captured = capsys.readouterr()
+    assert "seen=1 added=1" in captured.out
+    assert "token-needle-sync" not in captured.out + captured.err
+
+
+def test_commands_report_an_unusable_data_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    not_a_directory = tmp_path / "regular-file"
+    not_a_directory.write_text("occupied", encoding="utf-8")
+    monkeypatch.setattr(cli, "_read_token", lambda: "token")
+
+    configure_exit = cli.main(
+        [
+            "plex",
+            "configure",
+            "--data-dir",
+            str(not_a_directory),
+            "--base-url",
+            "http://plex.local:32400",
+        ]
+    )
+    sync_exit = cli.main(["sync", "--data-dir", str(not_a_directory)])
+
+    assert (configure_exit, sync_exit) == (1, 1)
+    assert capsys.readouterr().err.count("cannot create data directory") == 2

@@ -1,11 +1,12 @@
 """The FastAPI app factory.
 
-M1-F0 scope: health endpoints plus the storage layer. `/livez` and `/readyz`
-are kept distinct per OBS-18/19/20 — `readyz` now performs a real database
-check (storage opens at startup; the probe runs a trivial query per request);
-the scheduler-heartbeat check joins it at M2 with the first scheduled poller.
-`livez` never depends on anything but the process being up, so it can't
-false-negative during a slow dependency check.
+M1 scope (F0 + F1): health endpoints, the storage layer, and the background
+sync scheduler. `/livez` and `/readyz` are kept distinct per OBS-18/19/20 —
+`readyz` performs a real database check (storage opens at startup; the probe
+runs a trivial query per request); the scheduler-heartbeat check joins it at
+M2 with the MusicBrainz poller (F3). `livez` never depends on anything but
+the process being up, so it can't false-negative during a slow dependency
+check.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from encore import __version__
+from encore.scheduler import build_sync_scheduler
 from encore.storage import Storage, StorageError
 
 
@@ -28,15 +30,22 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     (explicit argument > ``$ENCORE_DATA_DIR`` > ``./data``). The storage
     layer opens at startup (lifespan) — building the app object itself has
     no filesystem side effects, and a broken data directory fails the boot
-    loudly instead of leaving a half-ready server up.
+    loudly instead of leaving a half-ready server up. The sync scheduler
+    (F1) starts alongside it when Plex credentials are configured; no
+    network traffic happens at boot either way (the first run is one
+    interval out — see `encore.scheduler`).
     """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.storage = Storage(data_dir)
+        app.state.scheduler = build_sync_scheduler(app.state.storage)
         try:
             yield
         finally:
+            if app.state.scheduler is not None:
+                app.state.scheduler.shutdown(wait=False)
+                app.state.scheduler = None
             app.state.storage.close()
             app.state.storage = None
 

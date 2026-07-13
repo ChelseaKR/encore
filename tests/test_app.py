@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import encore.app as app_module
 from encore.app import create_app
 from encore.storage import Storage, StorageError
 
@@ -56,3 +57,24 @@ def test_lifespan_opens_and_closes_storage(tmp_path: Path) -> None:
     with TestClient(app):
         assert isinstance(app.state.storage, Storage)
     assert app.state.storage is None
+
+
+def test_lifespan_stops_a_running_sync_scheduler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class RunningScheduler:
+        def __init__(self) -> None:
+            self.shutdown_calls: list[bool] = []
+
+        def shutdown(self, *, wait: bool) -> None:
+            self.shutdown_calls.append(wait)
+
+    running = RunningScheduler()
+    monkeypatch.setattr(app_module, "build_sync_scheduler", lambda _storage: running)
+    app = create_app(tmp_path)
+
+    with TestClient(app):
+        assert app.state.scheduler is running
+
+    assert running.shutdown_calls == [False]
+    assert app.state.scheduler is None
