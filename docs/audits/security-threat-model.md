@@ -1,6 +1,6 @@
 # Security threat model
 
-Last reviewed: 2026-07-12. Review cadence: every milestone exit and release.
+Last reviewed: 2026-07-13. Review cadence: every milestone exit and release.
 
 ## Scope and assets
 
@@ -36,7 +36,7 @@ chain, and published container/release artifacts.
 |---|---|---|
 | Database copied without authorization | Secret-bearing settings are Fernet-encrypted; plaintext sentinel test; key mode `0600` | Copying both database and key, or controlling the live host, remains RR-01; operator backup/host security is required |
 | Secret or taste data enters logs | Gitleaks plus pinned Semgrep community packs and a tested sensitive-log rule; inline `nosemgrep` disabled; zero-waiver ledger | Add a planted sentinel-log test before F1 handles real Plex/taste payloads |
-| Database corruption or unavailable storage is reported healthy | Ordered migrations, WAL mode, real `/readyz` database probe, storage tests | Backup/restore and recovery guarantees remain milestone work |
+| Database corruption or unavailable storage is reported healthy | Ordered migrations, WAL mode, real `/readyz` database probe, storage tests, and stopped-service backup/restore procedure | An automated restore rehearsal and broader recovery guarantees remain milestone work |
 | Plex mutation or over-broad client behavior | ADR 0007 fixes the client boundary as read-only; CODEOWNERS covers future adapter files | No Plex client exists yet; an operation allowlist and negative mutation tests block F1 |
 | Taste information reaches an unintended person | No notification/feed surface exists; DPIA and residual-risk register name the harm | Sentinel-artist/no-outing tests and explicit destination confirmation block F4/F5 |
 | Unexpected outbound exfiltration | No product outbound clients exist at F0; CI egress is audited with Harden-Runner | A deny/allowlisted HTTP transport and sentinel exfiltration tests block F1/F3/F4 |

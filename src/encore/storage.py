@@ -20,7 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, SQLModel, create_engine
 
 from encore.models import SETTINGS_ROW_ID, AppSettings, utcnow
-from encore.secretstore import SecretCipher
+from encore.secretstore import SecretCipher, SecretKeyError
 
 __all__ = [
     "DATA_DIR_ENV",
@@ -81,8 +81,23 @@ class Storage:
         """
         self.data_dir = resolve_data_dir(data_dir)
         self._ensure_data_dir()
-        self.cipher = SecretCipher.load_or_create(self.data_dir / KEY_FILENAME)
         self.db_path = self.data_dir / DB_FILENAME
+        key_path = self.data_dir / KEY_FILENAME
+        try:
+            database_exists = self._entry_exists(self.db_path)
+            key_exists = self._entry_exists(key_path)
+        except OSError as exc:
+            raise StorageError(f"cannot inspect data directory {self.data_dir}: {exc}") from exc
+        if database_exists and not key_exists:
+            raise StorageError(
+                f"database exists at {self.db_path}, but its companion Fernet key is missing "
+                f"at {key_path}; refusing to create a replacement key. Restore the database "
+                "and key together from the same backup."
+            )
+        try:
+            self.cipher = SecretCipher.load_or_create(key_path)
+        except SecretKeyError as exc:
+            raise StorageError(f"cannot use Fernet key at {key_path}: {exc}") from exc
         self.engine = create_engine(
             f"sqlite:///{self.db_path}",
             # The FastAPI threadpool serves requests from worker threads; SQLite
@@ -91,6 +106,15 @@ class Storage:
         )
         event.listen(self.engine, "connect", _sqlite_on_connect)
         self._migrate()
+
+    @staticmethod
+    def _entry_exists(path: Path) -> bool:
+        """Test for a directory entry without following a possible symlink."""
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return False
+        return True
 
     def _ensure_data_dir(self) -> None:
         """Create the data directory (mode 0700) if needed; fail fast if unusable."""

@@ -88,6 +88,26 @@ Running the actual product (once Plex sync lands, M1+):
 docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
 ```
 
+### Back up and restore `/data`
+
+Treat the entire data directory as one consistency unit: it contains the SQLite
+database, its WAL files when active, and `encore.key`. Stop the Encore process or
+container before copying or snapshotting it, then copy **all of `/data`** with your
+normal volume-backup tooling before restarting the service. A live copy of only
+`encore.db` can be inconsistent, and a database copied without its matching key is
+intentionally unrecoverable.
+
+Restore the complete fileset from the same backup while Encore is stopped, keep
+`encore.key` owned by the service account with mode `0600`, and only then start the
+service. Never mix a database from one backup with a key from another; startup will
+fail closed rather than create a replacement key.
+
+A whole-volume backup contains both ciphertext and the key that decrypts it.
+Fernet therefore does **not** protect that backup from disclosure: encrypt and
+access-control backup media as high-sensitivity secret material. Encryption at
+rest here protects only a database-only copy whose companion key remains separately
+protected.
+
 ## Standards conformance
 
 This repo references the portfolio's private engineering standards rather than

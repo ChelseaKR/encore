@@ -94,6 +94,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Storage now fails closed when an existing database has no companion Fernet
+  key instead of silently minting an unusable replacement. Existing key files
+  must be regular, non-symlink paths with no group/other permissions, and a
+  concurrent first-start process reuses the exclusive-create winner or reports
+  a clear recovery error. CodeQL no longer requests `security-events: write`
+  while SARIF upload is disabled, and the DPIA now correctly distinguishes the
+  plaintext Plex base URL from the encrypted token. Backup documentation now
+  requires a stopped, consistent copy of the complete `/data` fileset and states
+  explicitly that a whole-volume backup contains the decryption key and must be
+  protected as secret material.
+
 - README/`docs/ROADMAP.md` pointed at `docs/audits/dpia.md`, which did not exist;
   the file is now a real, if narrow, M0 DPIA rather than a corrected-away claim.
 - `docs/RESPONSIBLE-TECH-AUDITS.md` §F claimed "CI itself runs with
