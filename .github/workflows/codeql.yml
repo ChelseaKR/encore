@@ -1,14 +1,15 @@
 # CodeQL SAST (SEC-08; CICD-20 adds the `actions` language pack so the workflow
 # YAML itself is analyzed, not just Python).
 #
-# Trigger honesty (2026-07-09): currently `workflow_dispatch`-only — GitHub Actions
-# billing is broken account-wide (roadmap B1/U6), so scheduled/push runs would only
-# accumulate guaranteed failures. When billing is fixed and CI proof-of-life passes,
-# restore `push: branches: [main]` + a weekly `schedule:` cron here (the pre-billing
-# posture, minus the per-PR run that PR #3 trimmed for Actions-minutes cost).
+# Trigger posture (2026-07-14): scan every main update and weekly even during quiet
+# periods. Manual dispatch remains available for incident response and verification.
 name: codeql
 
 on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "37 9 * * 2"
   workflow_dispatch: {}
 
 permissions:
