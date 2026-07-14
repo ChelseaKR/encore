@@ -56,7 +56,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | ruff (format+lint) | AUTO (CQ-04) | 0 findings | 1–2 | Met |
 | Semgrep HIGH/CRIT | AUTO (SEC-07) | 0 | 5 | Not yet wired — Semgrep join CI when there's non-trivial application logic to scan (tracked, not silently dropped) |
 | Fixable HIGH/CRIT vulns (pip-audit + osv-scanner) | AUTO (SEC-11/13) | 0 | 5 | Met (both engines wired 2026-07-09 — pip-audit on the locked env, osv-scanner on `uv.lock`) |
-| CodeQL | AUTO (SEC-08) | 0 alerts | 5 | Wired but **dispatch-only** while GitHub Actions billing is broken (roadmap B1/U6); push-to-main + weekly schedule get restored at CI proof-of-life |
+| CodeQL | AUTO (SEC-08) | 0 alerts | 5 | Python + Actions packs run on every `main` update and weekly; manual dispatch retained |
 | Secret scan (gitleaks) | AUTO (SEC-17/18) | clean | 5 | Met (pre-commit + CI) |
 | Scorecard aggregate | AUTO (SEC-37) | ≥8 | 5 | Not yet run — requires a public repo; deferred to the public/private flip |
 | Lighthouse a11y | AUTO (A11Y-02) | ≥0.95 | 6 | **N/A at M0** — no UI surface exists yet; applies from M2 (first real UI) |
@@ -67,7 +67,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
 | Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
 | Workflow SAST (zizmor) | AUTO (CICD-19) | 0 findings | 5 | Met (wired 2026-07-05, `ci.yml`) |
-| CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Wired 2026-07-05 (`codeql.yml`); same dispatch-only caveat as the CodeQL row above |
+| CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Wired 2026-07-05 (`codeql.yml`); automatic triggers restored 2026-07-14 |
 | SLO schema (`slos/*.yaml`) | AUTO (OBS-14) | conforms | 4 | Met — `make slo-check` (`scripts/validate_slos.py`, wired 2026-07-09); the SLI query itself stays a documented placeholder until the F3 poller exists (M2) |
 | CITATION.cff validity | AUTO (DOC-08) | valid | 4 | Met — `make citation-check` (pinned cffconvert via uvx, wired 2026-07-09) |
 | Wheel/sdist build | AUTO (CQ-10) | builds | 9 | Met — `make wheel` (`uv build`) in `make verify` + CI (wired 2026-07-09); container is no longer the only artifact |

@@ -44,15 +44,19 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Standards audit remediation (2026-07-14).** Raised the declared mypy floor to
+  `>=1.18`, restored automatic CodeQL scans on every `main` update plus a weekly
+  schedule, and aligned the README/i18n declarations with the canonical standards
+  names and reason-bearing N/A syntax. `CITATION.cff` remains deliberately undated
+  until the first real tag; CFF 1.2.0 defines `date-released` as optional.
 - `SECURITY.md` now leads with the email reporting channel: GitHub private
   vulnerability reporting is non-functional on a private free-plan repo
   (DOC-09, B13) — reorder back when the repo flips public. Its phantom
   `tests/fixtures/` reference now points at `tests/` until real fixture trees
   land with F1.
 - `codeql.yml`'s header comment and `docs/ROADMAP.md`'s §7 ledger now state the
-  workflow's real trigger state (dispatch-only while GitHub Actions billing is
-  broken) instead of the pre-billing "nightly + PR" claim; `docs/ROADMAP.md`
-  §11 gained an explicit `### Observability` subheading (OBS-21, B12).
+  workflow's real automatic trigger state; `docs/ROADMAP.md` §11 gained an explicit
+  `### Observability` subheading (OBS-21, B12).
 - CI (`ci.yml`) and the release gate (`release.yml`) now install via
   `uv sync --frozen` and run the actual `make` targets (`make install`,
   `make lint`, `make type`, `make cov`, `make security`, and — for
