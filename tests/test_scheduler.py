@@ -126,7 +126,7 @@ def test_scheduled_sync_handles_removed_credentials_and_sync_errors(
     storage = Storage(tmp_path)
     with caplog.at_level(logging.WARNING):
         scheduler._run_scheduled_sync(storage)
-    assert "credentials were removed" in caplog.text
+    assert "the stored Plex connection was removed" in caplog.text
 
     storage.set_plex_credentials("http://plex.local:32400", "fixture-token")
     monkeypatch.setattr(scheduler, "PlexMusicClient", lambda *_args: object())

@@ -25,11 +25,12 @@
 # inherits F2's match quality.
 /src/encore/matching/                  @ChelseaKR
 
-# Responsible-tech / privacy audits and the mechanical no-outing guards.
+# Responsible-tech / privacy audits and the mechanical no-outing guards
+# (the read-only-Plex contract tests and the sync/scheduler logging sentinels).
 /docs/RESPONSIBLE-TECH-AUDITS.md       @ChelseaKR
 /docs/audits/                          @ChelseaKR
-/tests/test_no_outing.py               @ChelseaKR
-/tests/test_read_only_plex.py          @ChelseaKR
+/tests/test_plex_client.py             @ChelseaKR
+/tests/test_scheduler.py               @ChelseaKR
 
 # Governance and supply chain.
 /.github/                              @ChelseaKR

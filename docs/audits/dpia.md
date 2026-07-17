@@ -12,6 +12,14 @@ token Fernet-encrypted under a key beside the database and the base URL stored
 in plaintext. A raw-bytes test in `tests/test_secrets_at_rest.py` proves both
 facts. No new data class and no new outbound flow was added, so the full
 regeneration against the real schema remains due at M1 exit as stated above.
+**F1 update (2026-07-17):** the artist-inventory data class is now real — the
+`artists` table stores artist name, Plex GUID, Plex rating key, library key,
+and first/last-seen + tombstone timestamps, synced read-only from the
+operator's own Plex server (the only party contacted; enforced at the
+transport layer, `docs/adr/0007`). Play counts are **not** collected — that
+column arrives with F9, not F1. Logging of this taste data is sentinel-tested
+(`no_outing`/`no_secrets_in_logs` markers): counts at INFO, names at DEBUG
+only. The full regeneration against the real schema remains due at M1 exit.
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14
@@ -61,7 +69,8 @@ Encore does with that access rather than trying to avoid holding it.
 |---|---|---|---|---|---|
 | Plex base URL | locate the operator's Plex server for library sync (F1) | SQLite, plaintext | until user removes it | Low — endpoint location, not an access credential | Nobody. Never leaves the host. |
 | Plex token | authenticate library sync (F1) | SQLite, Fernet-encrypted at rest (`docs/adr/0008`) | until user removes it | **High** — grants full Plex access | Nobody. Never leaves the host. |
-| Artist inventory + play counts | matching, weighting (F2, F9) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | MusicBrainz/ListenBrainz receive artist names + MBIDs only, never play counts |
+| Artist inventory (implemented with F1: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | MusicBrainz/ListenBrainz will receive artist names + MBIDs only (from F2); nothing is sent anywhere today |
+| Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirrors Plex | Medium — taste data | Never shared — local weighting only |
 | MBID match table | release watching (F3) | SQLite | permanent cache | Low | Not shared; internal cache |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials | Whatever destination the user configured (their own Discord/ntfy/SMTP/etc.) |
 | Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste | Whoever the user shares the feed URL with (their choice) |

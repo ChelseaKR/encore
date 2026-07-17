@@ -47,7 +47,7 @@ def _run_scheduled_sync(storage: Storage) -> None:
     """One scheduled sync run: re-read credentials, sync, log counts only."""
     credentials = storage.get_plex_credentials()
     if credentials is None:
-        logger.warning("scheduled sync skipped: Plex credentials were removed")
+        logger.warning("scheduled sync skipped: the stored Plex connection was removed")
         return
     base_url, token = credentials
     try:
@@ -92,7 +92,7 @@ def build_sync_scheduler(storage: Storage) -> BackgroundScheduler | None:
         logger.error("sync scheduler not started: %s", exc)
         return None
     if credentials is None:
-        logger.info("sync scheduler idle: no Plex credentials configured yet")
+        logger.info("sync scheduler idle: Plex connection not configured yet")
         return None
     scheduler = BackgroundScheduler()
     scheduler.add_job(
