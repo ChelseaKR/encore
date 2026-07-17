@@ -64,15 +64,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Standards audit remediation (2026-07-14).** Raised the declared mypy floor to
+  `>=1.18`, restored automatic CodeQL scans on every `main` update plus a weekly
+  schedule, and aligned the README/i18n declarations with the canonical standards
+  names and reason-bearing N/A syntax. `CITATION.cff` remains deliberately undated
+  until the first real tag; CFF 1.2.0 defines `date-released` as optional.
 - `SECURITY.md` now leads with the email reporting channel: GitHub private
   vulnerability reporting is non-functional on a private free-plan repo
   (DOC-09, B13) — reorder back when the repo flips public. Its phantom
   `tests/fixtures/` reference now points at `tests/` until real fixture trees
   land with F1.
-- `codeql.yml` and `docs/ROADMAP.md` now state the workflow's real trigger state:
-  manual plus weekly, with SARIF checked in-run because private-repo upload is
-  unavailable. GitHub Actions jobs remain externally blocked by the account
-  budget; the configured controls are preserved rather than weakened.
+- `codeql.yml` scans automatically again (push to `main` + weekly + manual
+  dispatch) with SARIF findings gated in-run because private-repo upload is
+  unavailable without GHAS. GitHub Actions jobs remain externally blocked by the
+  account budget; the configured controls are preserved rather than weakened.
+  `docs/ROADMAP.md`'s §7 ledger states the real trigger state and §11 gained an
+  explicit `### Observability` subheading (OBS-21, B12).
 - CI (`ci.yml`) and the release gate (`release.yml`) now install via
   `uv sync --frozen` and run the actual `make` targets (`make install`,
   `make lint`, `make type`, `make cov`, `make security`, and — for

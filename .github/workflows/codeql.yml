@@ -1,16 +1,20 @@
 # CodeQL SAST (SEC-08; CICD-20 adds the `actions` language pack so the workflow
 # YAML itself is analyzed, not just Python).
 #
-# Trigger honesty (2026-07-11): manual plus weekly. GitHub Actions jobs are still
-# blocked account-wide by the external budget condition (roadmap B1/U6), but the
-# schedule remains configured so the control resumes without a code change when
-# billing is restored. Push-to-main can return after CI proof-of-life.
+# Trigger posture (2026-07-14): scan every main update and weekly even during quiet
+# periods. Manual dispatch remains available for incident response and verification.
+# Honesty note (2026-07-17): the account-wide Actions budget block (roadmap B1/U6,
+# ⛔USER) still prevents jobs from starting; this workflow is configured so the
+# control resumes without a code change once billing is restored. No GHAS on this
+# private repo, so findings gate in-run instead of uploading SARIF (see analyze job).
 name: codeql
 
 on:
-  workflow_dispatch: {}
+  push:
+    branches: [main]
   schedule:
-    - cron: '29 3 * * 2' # weekly — re-armed 2026-07-11 (metrics plan Phase 0.2)
+    - cron: "37 9 * * 2"
+  workflow_dispatch: {}
 
 permissions:
   contents: read
