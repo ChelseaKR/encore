@@ -80,7 +80,7 @@ rather than discovering it after a leak. Source planning material:
 | Plex base URL + token | library sync (F1) | SQLite, encrypted at rest (`docs/adr/0008`) | until user removes | **High** — grants full Plex access |
 | Artist inventory (implemented with F1, 2026-07-17: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirror of Plex; tombstoned on removal | Medium — taste data, inference-rich |
 | Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirror of Plex | Medium — taste data |
-| MBID match table | release watching (F3) | SQLite | permanent cache | Low |
+| MBID match table (`artist_matches`, implemented 2026-07-17) | identity matching + review queue (F2); release watching (F3) | SQLite | permanent cache; manually re-matchable/skippable | Medium — artist names + candidate lists are taste data |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials |
 | Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste |
 | Optional ListenBrainz username (F11, not yet built) | account linking | SQLite | until unlinked | Medium |
