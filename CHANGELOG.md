@@ -8,6 +8,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Semgrep is now a blocking merge/release gate (SEC-07/SEC-02).** The pinned
+  CLI scans `p/default`, `p/python`, and a repository rule that rejects passing
+  token/secret/password/credential/taste fields to Python log calls. It runs
+  inside `make security`, so local, CI, and tag verification share one command;
+  inline `nosemgrep` suppressions are disabled, the custom rule has a regression
+  fixture, and `.semgrep-waivers.yml` is committed with no waivers.
+
+- **F0 storage & secrets layer (M1, 2026-07-11).** SQLite (WAL) via SQLModel in a
+  single data directory (`src/encore/storage.py`), with ordered forward
+  migrations tracked in `PRAGMA user_version`; a Fernet key file created 0600
+  beside the database encrypting secret-bearing columns at rest
+  (`src/encore/secretstore.py`, docs/adr/0008) — proven by a test that greps
+  the raw database bytes for the plaintext token; the `settings` singleton
+  table holding the Plex base URL + encrypted token (`src/encore/models.py`).
+  `encore serve --data-dir` is back and wired for real this time (explicit
+  flag > `$ENCORE_DATA_DIR` > `./data`), the Dockerfile `CMD` passes
+  `--data-dir /data` again, and `/readyz` performs an actual database probe
+  instead of returning a literal. Scope honesty: no Plex sync, matching, or
+  scheduler yet — this is the prerequisite layer F1/F2 build on.
+
 - **Gate top-ups (2026-07-09).** `make verify` grew four gates: `osv-scanner`
   against `uv.lock` as the second dependency-scan engine beside pip-audit
   (SEC-11/13, roadmap B5); `make slo-check` schema-validating `slos/*.yaml`
@@ -54,9 +74,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (DOC-09, B13) — reorder back when the repo flips public. Its phantom
   `tests/fixtures/` reference now points at `tests/` until real fixture trees
   land with F1.
-- `codeql.yml`'s header comment and `docs/ROADMAP.md`'s §7 ledger now state the
-  workflow's real automatic trigger state; `docs/ROADMAP.md` §11 gained an explicit
-  `### Observability` subheading (OBS-21, B12).
+- `codeql.yml` scans automatically again (push to `main` + weekly + manual
+  dispatch) with SARIF findings gated in-run because private-repo upload is
+  unavailable without GHAS. GitHub Actions jobs remain externally blocked by the
+  account budget; the configured controls are preserved rather than weakened.
+  `docs/ROADMAP.md`'s §7 ledger states the real trigger state and §11 gained an
+  explicit `### Observability` subheading (OBS-21, B12).
 - CI (`ci.yml`) and the release gate (`release.yml`) now install via
   `uv sync --frozen` and run the actual `make` targets (`make install`,
   `make lint`, `make type`, `make cov`, `make security`, and — for
@@ -77,6 +100,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and activation milestone (DOC-14).
 
 ### Fixed
+
+- Storage now fails closed when an existing database has no companion Fernet
+  key instead of silently minting an unusable replacement. Existing key files
+  must be regular, non-symlink paths with no group/other permissions, and a
+  concurrent first-start process reuses the exclusive-create winner or reports
+  a clear recovery error. CodeQL no longer requests `security-events: write`
+  while SARIF upload is disabled, and the DPIA now correctly distinguishes the
+  plaintext Plex base URL from the encrypted token. Backup documentation now
+  requires a stopped, consistent copy of the complete `/data` fileset and states
+  explicitly that a whole-volume backup contains the decryption key and must be
+  protected as secret material.
 
 - README/`docs/ROADMAP.md` pointed at `docs/audits/dpia.md`, which did not exist;
   the file is now a real, if narrow, M0 DPIA rather than a corrected-away claim.

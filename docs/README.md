@@ -14,6 +14,8 @@ This index is the handoff point for the documentation sweep last reviewed on 202
 - [Documentation Audit](DOCUMENTATION-AUDIT.md)
 - [Roadmap](ROADMAP.md)
 - [Responsible Tech Audits](RESPONSIBLE-TECH-AUDITS.md)
+- [Residual-risk register](audits/residual-risk.md)
+- [Security threat model](audits/security-threat-model.md)
 - [Security](../SECURITY.md)
 - [Contributing](../CONTRIBUTING.md)
 - [I18N](I18N.md)

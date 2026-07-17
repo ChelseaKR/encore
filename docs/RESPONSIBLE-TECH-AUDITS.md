@@ -1,6 +1,6 @@
 # Responsible-Tech Audits — encore
 
-> **Last verified: 2026-07-05 · Recheck cadence: at each milestone exit**, matching
+> **Last verified: 2026-07-12 · Recheck cadence: at each milestone exit**, matching
 > `docs/ROADMAP.md`'s own cadence note (DOC-15). Each section below carries its own
 > sign-off date; re-date a section when its content is substantively re-reviewed,
 > not on every unrelated repo edit.
@@ -58,9 +58,9 @@ rather than discovering it after a leak. Source planning material:
 ## C. Privacy & data-protection
 
 - **Data inventory:** see the DPIA table below; `docs/audits/dpia.md` holds the full
-  assessment (necessity, legal basis, risk, mitigation) built from this table as its
-  M0 seed. It's regenerated against the real schema at M1, once one exists to
-  regenerate it against — see that file's own "Recheck trigger."
+  assessment (necessity, legal basis, risk, mitigation). Its F0 update is grounded
+  in the implemented settings schema; it is regenerated again when Plex/matching
+  tables and outbound flows activate — see that file's own "Recheck trigger."
 - **Handling:** local-first — everything lives in Encore's own SQLite file. Outbound
   calls are purpose-bound: artist names/MBIDs to MusicBrainz/ListenBrainz (matching,
   watching, recommendations), and whatever the user configures to their own
@@ -131,7 +131,8 @@ email addresses (beyond a user-supplied SMTP target), music files.
   steady-state endpoint set — tracked in each workflow's own comment, not asserted
   here ahead of the config actually doing it.
 - **Controls:** ASVS **L2** (Encore stores a credential granting full Plex access
-  plus sensitive taste data) — Semgrep zero HIGH/CRIT (deferred, ROADMAP §7),
+  plus sensitive taste data) — pinned Semgrep zero HIGH/CRIT (`p/default`,
+  `p/python`, and the local no-sensitive-values-in-logs rule; no waivers),
   CodeQL (python + actions), pip-audit, gitleaks (pre-commit + CI + a weekly
   full-history TruffleHog sweep), zizmor for the workflows themselves, Trivy on
   every container build (not just at release — see ci.yml Stage 9), keyless cosign
@@ -143,10 +144,10 @@ email addresses (beyond a user-supplied SMTP target), music files.
   CycloneDX 1.7 `vex.json` is committed alongside the affected release, stating the
   justification (`not_affected`/`affected`/`fixed`/`under_investigation` per the
   VEX spec) and is reviewed quarterly thereafter (SEC-40).
-- **Residual-risk register:** not yet instantiated (`docs/audits/residual-risk.md`)
-  — there is no feature code yet to carry residual risk. Created at M1 alongside the
-  first Plex-touching code. **Auto-gated:** the security CI stage (wired from M0).
-  **Review-gated:** the residual-risk register is reviewed at each milestone exit.
+- **Residual-risk register:** `docs/audits/residual-risk.md` records the risks
+  introduced by the F0 credential store and the explicit activation conditions
+  for later Plex/matching risks. **Auto-gated:** the security CI stage.
+  **Review-gated:** the register is reviewed at each milestone exit.
 - **Signed off:** 2026-07-05 — Chelsea Kelly-Reif.
 
 ---
@@ -156,8 +157,9 @@ email addresses (beyond a user-supplied SMTP target), music files.
 - `docs/audits/dpia.md` — full DPIA, committed at M0 as a real (if narrow)
   assessment against the ADR-level design; regenerated against the actual schema
   at M1
-- `docs/audits/security-threat-model.md` — expanded from §F above (M1)
-- `docs/audits/residual-risk.md` — created at M1
+- `docs/audits/security-threat-model.md` — F0 threat model expanded from §F;
+  activation gates keep future Plex/matching risks explicit
+- `docs/audits/residual-risk.md` — F0 residual-risk register
 - `docs/a11y/STATEMENT.md` — accessibility conformance statement (M4)
 
 No LLM exists in this product, so RTF-09..15 (AI risk register, EU AI Act

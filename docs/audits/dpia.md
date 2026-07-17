@@ -1,12 +1,17 @@
 # Data Protection Impact Assessment — encore
 
-**Status:** M0 seed — regenerated in full against the real schema at M1 (see
-"Recheck" below). This is not a placeholder: it is a real, if narrow, assessment
-of what M0 already knows about the product's data — the health-check scaffold
-plus the F1-F5 design committed in `docs/adr/`.
+**Status:** F0 assessment — grounded in the implemented settings schema and
+regenerated again when Plex/matching data and outbound flows activate (see
+"Recheck" below). This is not a placeholder: it assesses current storage plus
+the F1-F5 design committed in `docs/adr/`.
 
 **Owner:** Chelsea Kelly-Reif (sole maintainer and controller — see §5).
-**Date:** 2026-07-05.
+**Date:** 2026-07-05. **F0 update (2026-07-11):** the storage layer now exists —
+the Plex credential inventory rows below are implemented in SQLite with the
+token Fernet-encrypted under a key beside the database and the base URL stored
+in plaintext. A raw-bytes test in `tests/test_secrets_at_rest.py` proves both
+facts. No new data class and no new outbound flow was added, so the full
+regeneration against the real schema remains due at M1 exit as stated above.
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14
@@ -54,7 +59,8 @@ Encore does with that access rather than trying to avoid holding it.
 
 | Data | Why held | Where | Retention | Sensitivity | Shared with |
 |---|---|---|---|---|---|
-| Plex base URL + token | library sync (F1) | SQLite, encrypted at rest (`docs/adr/0008`) | until user removes it | **High** — grants full Plex access | Nobody. Never leaves the host. |
+| Plex base URL | locate the operator's Plex server for library sync (F1) | SQLite, plaintext | until user removes it | Low — endpoint location, not an access credential | Nobody. Never leaves the host. |
+| Plex token | authenticate library sync (F1) | SQLite, Fernet-encrypted at rest (`docs/adr/0008`) | until user removes it | **High** — grants full Plex access | Nobody. Never leaves the host. |
 | Artist inventory + play counts | matching, weighting (F2, F9) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | MusicBrainz/ListenBrainz receive artist names + MBIDs only, never play counts |
 | MBID match table | release watching (F3) | SQLite | permanent cache | Low | Not shared; internal cache |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials | Whatever destination the user configured (their own Discord/ntfy/SMTP/etc.) |
@@ -78,8 +84,9 @@ legal reading.
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Household/shared-server observer is outed by a taste feed landing somewhere visible to them (e.g. a shared Discord channel, a shared iCal calendar) | Medium — this is a "works as intended" harm, not a bug | Medium-High, personal | No silent multi-library aggregation; non-goals published in README; rotatable feed tokens; sentinel-artist tripwire test from M1 |
-| Token thief (stolen backup, stolen disk image) recovers the Plex token or an Apprise URL in plaintext | Low-Medium (depends on the operator's backup hygiene, outside Encore's control) | High — full Plex access, or a notification-channel credential | Fernet encryption at rest (`docs/adr/0008`); boundary stated honestly: this does not protect a live root-level attacker on the running host, only copies |
-| A future integration (F11/F12/F14) adds a new outbound data flow without a matching privacy review | Low today (nothing beyond M0 exists) | Depends on the integration | This document's own recheck trigger (above); CODEOWNERS routes `/docs/audits/` and `/src/encore/matching/` to mandatory review |
+| Token thief obtains a database-only copy without its separately protected key | Low-Medium (depends on operator storage hygiene) | High — full Plex access, or a notification-channel credential | Fernet encryption at rest (`docs/adr/0008`) keeps the secret columns ciphertext without the matching key |
+| Token thief obtains the whole `/data` volume, snapshot, or backup | Low-Medium (depends on operator backup hygiene, outside Encore's control) | High — the adjacent key can decrypt every stored secret | Encryption is not credited as a control here; stop-and-copy guidance in the README preserves recoverability, while host access control and encrypted/restricted backup storage mitigate RR-01 |
+| A future integration (F11/F12/F14) adds a new outbound data flow without a matching privacy review | Low today (nothing beyond F0 storage exists) | Depends on the integration | This document's own recheck trigger (above); CODEOWNERS routes `/docs/audits/` and `/src/encore/matching/` to mandatory review |
 | MusicBrainz/ListenBrainz correlate a user's IP with their artist list over time (an inherent property of any API call, not an Encore bug) | Certain, by design of using a third-party API | Low-Medium — reveals taste to two nonprofits' infrastructure, not to the public | Disclosed plainly in README §Privacy as a "disclosure choice," not implied away as "local-first means zero egress" |
 
 ## 5. Legal basis and applicability
@@ -105,11 +112,11 @@ guarantees are pytest-marked `recovery` and tracked in `docs/ROADMAP.md`),
 and full portability (SQLite is already a portable, inspectable format with no
 proprietary export step required).
 
-## 7. Regenerate-at-M1 note
+## 7. Regenerate when Plex/matching activates
 
-At M1, once the real schema exists (`src/encore/plex/`, `src/encore/matching/`
-land), this document should be regenerated against actual table definitions
-rather than the ADR-level description above, and gain: the sentinel-artist
-tripwire test result, the no-exfiltration outbound-request allowlist, and the
-residual-risk register cross-reference (`docs/audits/residual-risk.md`, also
-created at M1 per `docs/RESPONSIBLE-TECH-AUDITS.md` §F).
+When the Plex and matching schemas (`src/encore/plex/`, `src/encore/matching/`)
+land, this document must be regenerated against their actual table definitions
+rather than the ADR-level description above, and gain the sentinel-artist
+tripwire result and no-exfiltration outbound-request allowlist. The
+pre-activation residual-risk register already exists at
+`docs/audits/residual-risk.md`; update its dormant F1/M2 rows in the same PR.

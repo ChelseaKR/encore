@@ -7,7 +7,8 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · scaffold (`M0`) · independent personal open-source project ·
+**Status:** pre-alpha · `M1` in progress (F0 storage layer landed; no Plex sync or
+product features yet) · independent personal open-source project ·
 Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
 client material.
 
@@ -56,6 +57,9 @@ encore/
 │   ├── app.py                 # FastAPI app factory — health endpoints today,
 │   │                          #   the htmx UI + JSON API as features land
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
+│   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
+│   ├── models.py              # SQLModel tables — the settings singleton today
+│   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── plex/                  # read-only Plex client wrapper (F1)                 [M1]
 │   ├── matching/               # MusicBrainz identity matching + review queue (F2)  [M1]
 │   ├── watch/                  # release-group polling + diffing (F3)               [M2]
@@ -84,6 +88,26 @@ Running the actual product (once Plex sync lands, M1+):
 docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
 ```
 
+### Back up and restore `/data`
+
+Treat the entire data directory as one consistency unit: it contains the SQLite
+database, its WAL files when active, and `encore.key`. Stop the Encore process or
+container before copying or snapshotting it, then copy **all of `/data`** with your
+normal volume-backup tooling before restarting the service. A live copy of only
+`encore.db` can be inconsistent, and a database copied without its matching key is
+intentionally unrecoverable.
+
+Restore the complete fileset from the same backup while Encore is stopped, keep
+`encore.key` owned by the service account with mode `0600`, and only then start the
+service. Never mix a database from one backup with a key from another; startup will
+fail closed rather than create a replacement key.
+
+A whole-volume backup contains both ciphertext and the key that decrypts it.
+Fernet therefore does **not** protect that backup from disclosure: encrypt and
+access-control backup media as high-sensitivity secret material. Encryption at
+rest here protects only a database-only copy whose companion key remains separately
+protected.
+
 ## Standards conformance
 
 This repo references the portfolio's private engineering standards rather than
@@ -95,9 +119,9 @@ never committed. Per-repo *values* live in [`docs/ROADMAP.md`](docs/ROADMAP.md) 
 |---|---|---|
 | Code Quality | ✅ | `ruff` (incl. complexity + TODO/suppression gates) + `mypy --strict`; branch coverage ≥85%; src layout; uv + frozen lock |
 | CI/CD | ✅ | Single `ci.yml`, ordered stages; least-privilege tokens; SHA-pinned actions; Harden-Runner (audit mode) on every workflow; `make verify` is the literal command CI and `release.yml` run, not a parallel reimplementation |
-| Security & Supply-Chain | ✅ | ASVS **L2** (holds a Plex token + taste data) — pip-audit + gitleaks (locked env, pre-commit + CI + weekly full-history TruffleHog sweep), CodeQL (python + actions), zizmor, Trivy on every container build; cosign+SBOM **at first tagged release (M4)** |
+| Security & Supply-Chain | ✅ | ASVS **L2** (holds a Plex token + taste data) — pinned Semgrep (`p/default`, `p/python`, custom no-sensitive-log rule; zero waivers), pip-audit + osv-scanner + gitleaks (locked env, pre-commit + CI + weekly full-history TruffleHog sweep), CodeQL (python + actions), zizmor, Trivy on every container build; cosign+SBOM **at first tagged release (M4)** |
 | Release & Versioning | ✅ | SemVer; signed tags (from M4, first release); Keep-a-Changelog; GHCR by digest, never `:latest` |
-| Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A: no UI surface exists at M0**; goes merge-blocking at M2 (first real UI) |
+| Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A today**: F0 has no UI surface; goes merge-blocking at M2 (first real UI) |
 | Observability | ✅ | Tier A (running service) — `/livez`+`/readyz` today; structured JSON logs + PII/secret redaction **land at M1–M2** with the routes/pollers they measure (`docs/ROADMAP.md` §11) |
 | Internationalization | **N/A — no user-facing strings at M0** | Gettext seam activates at M2 when the first user-facing string ships — see [`docs/I18N.md`](docs/I18N.md) |
 | AI Evaluation | **N/A — no LLM/model** | Flips to Applies if F14 ("vibe" recs) ever lands; accepted decision in ADR-0009 |

@@ -1,10 +1,10 @@
 # Release pipeline (M4 scope, docs/adr/0008-secrets-at-rest-scheme.md's sibling
 # ADR on release integrity — full signing/SBOM/provenance chain).
 #
-# Stubbed at M0: wired and shaped correctly, but only fires on a signed vX.Y.Z tag,
+# Pre-release: wired and shaped correctly, but only fires on a signed vX.Y.Z tag,
 # which does not exist yet. Re-runs the literal `make verify` at the tagged commit
 # (REL-14, P0-4) before building — lint, type, test/coverage, AND security
-# (pip-audit + gitleaks), the exact same target a contributor runs locally, so a
+# (Semgrep + pip-audit + osv-scanner + gitleaks), the exact same target a contributor runs locally, so a
 # release can never ship a commit that didn't pass its own gate. (Earlier version
 # of this job re-implemented ruff/mypy/pytest by hand and silently dropped the
 # security stage entirely — fixed here by calling `make verify` instead of

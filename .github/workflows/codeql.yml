@@ -3,6 +3,10 @@
 #
 # Trigger posture (2026-07-14): scan every main update and weekly even during quiet
 # periods. Manual dispatch remains available for incident response and verification.
+# Honesty note (2026-07-17): the account-wide Actions budget block (roadmap B1/U6,
+# ⛔USER) still prevents jobs from starting; this workflow is configured so the
+# control resumes without a code change once billing is restored. No GHAS on this
+# private repo, so findings gate in-run instead of uploading SARIF (see analyze job).
 name: codeql
 
 on:
@@ -29,7 +33,6 @@ jobs:
         language: [python, actions]
     permissions:
       contents: read
-      security-events: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -45,3 +48,16 @@ jobs:
       - uses: github/codeql-action/analyze@f09c1c0a94de965c15400f5634aa42fac8fb8f88  # v3.28.19
         with:
           category: "/language:${{ matrix.language }}"
+          # No GHAS code scanning on this private repo — findings are checked in-run below.
+          upload: never
+          output: codeql-results
+
+      - name: Fail on findings (no GHAS on this private repo; SARIF checked in-run)
+        shell: bash
+        run: |
+          count=$(jq -s '[.[] | .runs[]?.results[]?] | length' codeql-results/*.sarif)
+          echo "CodeQL findings: ${count}"
+          if [ "${count:-0}" -gt 0 ]; then
+            jq -r '.runs[]?.results[]? | "\(.ruleId // "rule"): \(.locations[0].physicalLocation.artifactLocation.uri // "?"):\(.locations[0].physicalLocation.region.startLine // 0)"' codeql-results/*.sarif
+            exit 1
+          fi
