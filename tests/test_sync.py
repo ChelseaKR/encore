@@ -100,6 +100,50 @@ def test_various_artists_guard_skips_compilations(tmp_path: Path) -> None:
     storage.close()
 
 
+def test_cross_library_move_updates_in_place_under_partial_selection(tmp_path: Path) -> None:
+    """An artist that moved into the synced library must not insert a duplicate.
+
+    ``plex_rating_key`` is unique; the sync must find the existing row even
+    when its stored ``library_key`` is outside the current selection, and it
+    must never tombstone rows belonging to libraries that were not synced.
+    """
+    storage = Storage(tmp_path)
+    sync_artists(
+        storage,
+        _client(
+            [
+                FakeLibrary(key="1", title="Music", artists=[FakeArtist("101", "Mover")]),
+                FakeLibrary(key="3", title="Vinyl", artists=[FakeArtist("301", "Stays Behind")]),
+            ]
+        ),
+    )
+
+    # 101 moves from library 1 to library 3; only library 3 is synced.
+    report = sync_artists(
+        storage,
+        _client(
+            [
+                FakeLibrary(key="1", title="Music", artists=[]),
+                FakeLibrary(
+                    key="3",
+                    title="Vinyl",
+                    artists=[FakeArtist("301", "Stays Behind"), FakeArtist("101", "Mover")],
+                ),
+            ]
+        ),
+        library_keys=["3"],
+    )
+
+    assert report.added == 0
+    assert report.updated == 1
+    assert report.tombstoned == 0
+    rows = {row.plex_rating_key: row for row in _all_rows(storage)}
+    assert len(rows) == 2
+    assert rows["101"].library_key == "3"
+    assert rows["101"].removed_at is None
+    storage.close()
+
+
 def test_explicit_library_selection_limits_the_sync(tmp_path: Path) -> None:
     storage = Storage(tmp_path)
     libraries = [

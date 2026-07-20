@@ -142,7 +142,15 @@ def sync_artists(
     counts = {"added": 0, "updated": 0, "resurrected": 0, "unchanged": 0}
     now = utcnow()
     with storage.session() as session:
-        rows = session.exec(select(Artist).where(col(Artist.library_key).in_(keys))).all()
+        # Match on library membership OR rating key: an artist that moved into
+        # a synced library from an unsynced one must update its existing row
+        # (plex_rating_key is unique) rather than insert a duplicate.
+        inventory_keys = {entry.rating_key for entry in inventory}
+        rows = session.exec(
+            select(Artist).where(
+                col(Artist.library_key).in_(keys) | col(Artist.plex_rating_key).in_(inventory_keys)
+            )
+        ).all()
         existing = {row.plex_rating_key: row for row in rows}
         seen_keys: set[str] = set()
         for entry in inventory:
@@ -152,7 +160,11 @@ def sync_artists(
             session.add(row)
         tombstoned = 0
         for rating_key, row in existing.items():
-            if rating_key not in seen_keys and row.removed_at is None:
+            if (
+                rating_key not in seen_keys
+                and row.library_key in keys  # never tombstone unsynced libraries
+                and row.removed_at is None
+            ):
                 row.removed_at = now
                 session.add(row)
                 tombstoned += 1
