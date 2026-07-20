@@ -7,8 +7,9 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · `M1` in progress (F0 storage layer and F1 read-only Plex
-library sync landed; MusicBrainz matching next) · independent personal open-source project ·
+**Status:** pre-alpha · `M1` in progress (F0 storage layer, F1 read-only Plex
+library sync, and F2 MusicBrainz matching engine landed; sync does not feed the
+matcher automatically yet) · independent personal open-source project ·
 Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
 client material.
 
@@ -73,12 +74,13 @@ encore/
 │   │                          #   the htmx UI + JSON API as features land
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
 │   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
-│   ├── models.py              # SQLModel tables — settings singleton + artists inventory
+│   ├── models.py              # SQLModel tables — settings, artists inventory, artist matches
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
 │   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
 │   ├── scheduler.py           # background sync scheduler (daily default, off w/o creds)
-│   ├── matching/               # MusicBrainz identity matching + review queue (F2)  [M1]
+│   ├── matching/              # MusicBrainz matching + review queue (F2)
+│   │                          #   client/scorer/engine + artist_matches cache
 │   ├── watch/                  # release-group polling + diffing (F3)               [M2]
 │   ├── notify/                  # Apprise fan-out, RSS/iCal feeds (F4, F5)           [M2]
 │   └── recommend/              # ListenBrainz labs similar-artists (F7, F8)          [M3]

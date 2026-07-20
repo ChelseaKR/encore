@@ -18,9 +18,9 @@ from typing import Any
 
 from sqlalchemy import Connection, event
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
-from encore.models import SETTINGS_ROW_ID, AppSettings, utcnow
+from encore.models import MATCH_STATUSES, SETTINGS_ROW_ID, AppSettings, ArtistMatch, utcnow
 from encore.secretstore import SecretCipher, SecretKeyError
 
 __all__ = [
@@ -77,11 +77,17 @@ def _migration_0002_artists_and_library_selection(connection: Connection) -> Non
         connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN plex_library_keys VARCHAR")
 
 
+def _migration_0003_artist_matches(connection: Connection) -> None:
+    """v3 (F2): create ``artist_matches`` (guarded — no-op on a fresh database)."""
+    SQLModel.metadata.create_all(connection)
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0001_initial_schema,
     _migration_0002_artists_and_library_selection,
+    _migration_0003_artist_matches,
 )
 
 
@@ -241,3 +247,96 @@ class Storage:
                 return None
             keys = json.loads(settings.plex_library_keys)
             return [str(key) for key in keys]
+
+    # -- artist matches (F2) --------------------------------------------------
+
+    def get_artist_match(self, artist_key: str) -> ArtistMatch | None:
+        """Return the cached match decision for ``artist_key``, if any."""
+        with self.session() as session:
+            statement = select(ArtistMatch).where(ArtistMatch.artist_key == artist_key)
+            return session.exec(statement).first()
+
+    def save_artist_match(
+        self,
+        artist_key: str,
+        artist_name: str,
+        status: str,
+        mbid: str | None = None,
+        confidence: float | None = None,
+        candidates_json: str | None = None,
+    ) -> ArtistMatch:
+        """Insert or overwrite the match row for ``artist_key`` (the upsert).
+
+        Raises:
+            StorageError: ``status`` is not one of `encore.models.MATCH_STATUSES`.
+        """
+        if status not in MATCH_STATUSES:
+            raise StorageError(f"invalid match status {status!r}; expected {MATCH_STATUSES}")
+        with self.session() as session:
+            statement = select(ArtistMatch).where(ArtistMatch.artist_key == artist_key)
+            row = session.exec(statement).first()
+            if row is None:
+                row = ArtistMatch(artist_key=artist_key, artist_name=artist_name, status=status)
+            row.artist_name = artist_name
+            row.status = status
+            row.mbid = mbid
+            row.confidence = confidence
+            row.candidates_json = candidates_json
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def list_review_queue(self) -> list[ArtistMatch]:
+        """All artists awaiting review (status ``pending``), oldest first."""
+        with self.session() as session:
+            statement = (
+                select(ArtistMatch)
+                .where(ArtistMatch.status == "pending")
+                .order_by(ArtistMatch.created_at)  # type: ignore[arg-type]
+            )
+            return list(session.exec(statement).all())
+
+    def resolve_artist_match(self, artist_key: str, mbid: str) -> ArtistMatch:
+        """Manually match ``artist_key`` to ``mbid`` — resolution or re-match.
+
+        Works from any prior status: it resolves a pending review, and it
+        overrides a wrong auto/manual match (the roadmap's manual re-match).
+
+        Raises:
+            StorageError: no match row exists for ``artist_key``.
+        """
+        with self.session() as session:
+            statement = select(ArtistMatch).where(ArtistMatch.artist_key == artist_key)
+            row = session.exec(statement).first()
+            if row is None:
+                raise StorageError(f"no artist match row exists for key {artist_key!r}")
+            row.status = "manual"
+            row.mbid = mbid
+            row.confidence = None
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def skip_artist_match(self, artist_key: str) -> ArtistMatch:
+        """Mark ``artist_key`` deliberately unmatched (kept, so no re-query).
+
+        Raises:
+            StorageError: no match row exists for ``artist_key``.
+        """
+        with self.session() as session:
+            statement = select(ArtistMatch).where(ArtistMatch.artist_key == artist_key)
+            row = session.exec(statement).first()
+            if row is None:
+                raise StorageError(f"no artist match row exists for key {artist_key!r}")
+            row.status = "skipped"
+            row.mbid = None
+            row.confidence = None
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row

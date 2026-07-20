@@ -8,6 +8,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **F2 MusicBrainz identity matching + review queue (M1, 2026-07-17).**
+  `src/encore/matching/`: a polite MusicBrainz WS/2 search client (descriptive
+  User-Agent, process-global 1 req/s rate limiter that F3 must reuse,
+  `Retry-After` honored with bounded retries, Lucene escaping); a confidence
+  scorer (normalized-name exact > alias > bounded fuzzy, MB-score prior,
+  type/country hints, Plex-GUID MBID as a bounded score boost only — never a
+  review skip); and a cache-first engine that auto-matches at or above the
+  threshold and queues everything else for review. Decisions persist in a new
+  `artist_matches` table (migration v3) as a permanent cache — one MB query
+  per artist unless a re-match is forced — with manual resolve/re-match/skip
+  always available. A 22-case known-nasty fixture battery (homonyms,
+  diacritics, aliases, typos, tribute traps, one-album artists, empty
+  results) gates ≥95% correct terminal decisions and zero wrong auto-matches
+  in CI; `no_outing`/`no_secrets_in_logs` marker tests prove artist names,
+  MBIDs, and the Plex token never reach a log line or an outbound MB request
+  (httpx request-URL logging is deliberately suppressed for this reason).
+  Scope honesty: thresholds are provisional until the real-library validation
+  spike (roadmap U8) freezes them; the fixture payloads are synthetic
+  WS/2-shaped documents, not live recordings; there is no review UI yet (the
+  ≤3-clicks fix flow is M2) and nothing calls the engine on a schedule until
+  F1's sync loop integrates it.
+
 - **F1 Plex library sync (M1, 2026-07-17).** A read-only Plex adapter
   (`src/encore/plex/`, docs/adr/0007) wraps python-plexapi behind two mechanical
   guarantees: a transport-level `ReadOnlySession` that raises on any HTTP method

@@ -20,6 +20,19 @@ transport layer, `docs/adr/0007`). Play counts are **not** collected — that
 column arrives with F9, not F1. Logging of this taste data is sentinel-tested
 (`no_outing`/`no_secrets_in_logs` markers): counts at INFO, names at DEBUG
 only. The full regeneration against the real schema remains due at M1 exit.
+**F2 update (2026-07-17):** the MusicBrainz matching layer now exists
+(`src/encore/matching/`), which makes two rows below real rather than planned:
+the "MBID match table" is implemented as `artist_matches` (artist name, MBID,
+confidence, status, and a ranked-candidates JSON column for the review queue —
+all local, permanent-cache retention), and the MetaBrainz outbound flow is
+live in the code path: artist names travel to musicbrainz.org in search
+queries over HTTPS, tied to the operator's IP, exactly as the risk table
+already discloses. Egress carries a descriptive User-Agent and nothing else —
+no Plex token, no play counts — proven by `no_outing`/`no_secrets_in_logs`
+marker tests, which also pin that artist names/MBIDs never appear in log
+output (httpx request-URL logging is suppressed in the MB client for this
+reason). No *new* data class was added; the full regeneration against the
+real schema remains due at M1 exit.
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14
@@ -69,9 +82,9 @@ Encore does with that access rather than trying to avoid holding it.
 |---|---|---|---|---|---|
 | Plex base URL | locate the operator's Plex server for library sync (F1) | SQLite, plaintext | until user removes it | Low — endpoint location, not an access credential | Nobody. Never leaves the host. |
 | Plex token | authenticate library sync (F1) | SQLite, Fernet-encrypted at rest (`docs/adr/0008`) | until user removes it | **High** — grants full Plex access | Nobody. Never leaves the host. |
-| Artist inventory (implemented with F1: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | MusicBrainz/ListenBrainz will receive artist names + MBIDs only (from F2); nothing is sent anywhere today |
+| Artist inventory (implemented with F1: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | Artist names go to MusicBrainz as search queries at match time (F2, the disclosed MetaBrainz flow below); never play counts |
 | Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirrors Plex | Medium — taste data | Never shared — local weighting only |
-| MBID match table | release watching (F3) | SQLite | permanent cache | Low | Not shared; internal cache |
+| MBID match table (`artist_matches`: name, MBID, confidence, status, candidates) | identity matching + review queue (F2); release watching (F3) | SQLite | permanent cache; manually re-matchable/skippable | Medium — artist names + candidate lists are taste data | Not shared; internal cache. Artist names go to MusicBrainz as search queries at match time (the disclosed MetaBrainz flow below) |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials | Whatever destination the user configured (their own Discord/ntfy/SMTP/etc.) |
 | Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste | Whoever the user shares the feed URL with (their choice) |
 | Optional ListenBrainz username (F11, not yet built) | account linking | SQLite | until unlinked | Medium | ListenBrainz (by definition of linking an account there) |

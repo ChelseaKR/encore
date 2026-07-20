@@ -63,7 +63,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Lighthouse a11y | AUTO (A11Y-02) | ≥0.95 | 6 | **N/A today** — F0 has no UI surface; applies from M2 (first real UI) |
 | axe critical/serious/moderate | AUTO (A11Y-01) | 0 | 6 | **N/A today**, same reason |
 | Perf stage | N/A — no measurable hot path exists yet; revisit when a UI/poller creates one | — | 7 | N/A-with-reason (CICD-29) |
-| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1 surface (2026-07-17): sync/scheduler logging is sentinel-tested (`no_outing`/`no_secrets_in_logs` markers, blocking via `make responsible` in `make verify` + CI stage 8); the full tripwire battery grows with the F4/F5 egress surfaces (M2) |
+| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1 + F2 surfaces (2026-07-17): sync/scheduler logging is sentinel-tested and the matching layer's `no_outing`/`no_secrets_in_logs` marker tests prove artist names/MBIDs/token never reach logs or outbound MB requests (blocking via `make responsible` in `make verify` + CI stage 8); the full tripwire battery through feeds/notifications grows with the F4/F5 egress surfaces (M2) |
 | Read-only-Plex guard | AUTO (project) | pass | 8 | Met (F1, 2026-07-17) — transport-level `ReadOnlySession` rejects non-GET/HEAD/OPTIONS before network I/O, plus a facade no-mutating-verbs assertion (`tests/test_plex_client.py`, `read_only_plex` marker); blocking via `make responsible` |
 | Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
 | Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
@@ -76,7 +76,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Full-history secret scan (TruffleHog, verified) | AUTO (SEC-19) | 0 verified | 5 | Met — weekly, `.github/workflows/trufflehog.yml` (wired 2026-07-05) |
 | CI egress policy (Harden-Runner) | AUTO (SEC-04) | audit today | 1–9 | Met at `audit` — every workflow; flips to `block` once the steady-state endpoint allowlist is known from a few runs' telemetry |
 | MB rate-limit violations (soak counter) | AUTO (project) | 0 | 4 | N/A — no polling code exists yet; applies from M2 |
-| Auto-match precision (fixture library) | AUTO (project) | ≥95% fixtures; ≥90% field | 4 | N/A — applies from M1, after the validation spike |
+| Auto-match precision (fixture library) | AUTO (project) | ≥95% fixtures; ≥90% field | 4 | **Fixture half met (F2, 2026-07-17)** — the 22-case known-nasty battery in `tests/test_matching_engine.py` gates ≥95% correct decisions and zero wrong auto-matches on every run; the ≥90% field half needs the U8 validation spike on a real library, which also freezes the provisional thresholds |
 
 No row is a bare `N/A` — every one carries its reason and the milestone it activates
 at (DOC-12/13).
@@ -91,9 +91,10 @@ Milestones M0–M4 with exit criteria are specified in full in
   `README.md`, `docs/RESPONSIBLE-TECH-AUDITS.md`, `docs/I18N.md`, and `docs/adr/`
   are that graduation).
 - **M1 — Sync & match** (in progress; F0 storage complete, F1 Plex sync complete
-  2026-07-17, F2 matching unbuilt). *Exit:* validation spike committed; ≥90%
-  auto-match on the reference library; the read-only-Plex and no-outing guards land
-  as tests and go merge-blocking (done with F1 — `make responsible`, CI stage 8).
+  2026-07-17, F2 matching engine + review queue complete 2026-07-17). *Exit:*
+  validation spike committed; ≥90% auto-match on the reference library; the
+  read-only-Plex and no-outing guards land as tests and go merge-blocking (done
+  with F1/F2 — `make responsible`, CI stage 8).
 - **M2 — Watch & alert** (F3–F6, the MVP line). *Exit:* fresh install → test
   notification in <10 min; 24h soak with zero duplicate alerts and zero rate-limit
   violations; a11y gates go merge-blocking with the first real UI.
