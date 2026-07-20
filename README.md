@@ -12,6 +12,20 @@ product features yet) · independent personal open-source project ·
 Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
 client material.
 
+## Quickstart (developing)
+
+```sh
+make install   # uv sync --frozen --all-extras --group dev
+make verify    # the full merge gate: format+lint, type, test+coverage, security, todo-gate
+make serve     # run the dev server
+```
+
+Running the actual product (once Plex sync lands, M1+):
+
+```sh
+docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
+```
+
 ## Why this exists
 
 Several tools sync with Plex, alert on new releases, or recommend music — SoulSync,
@@ -74,21 +88,7 @@ encore/
 Full technical plan (data model, the sync/watch and recommend pipelines, the
 MusicBrainz rate budget) lives in the ADRs under `docs/adr/`.
 
-## Getting started (developing)
-
-```sh
-make install   # uv sync --frozen --all-extras --group dev
-make verify    # the full merge gate: format+lint, type, test+coverage, security, todo-gate
-make serve     # run the dev server
-```
-
-Running the actual product (once Plex sync lands, M1+):
-
-```sh
-docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
-```
-
-### Back up and restore `/data`
+## Back up and restore `/data`
 
 Treat the entire data directory as one consistency unit: it contains the SQLite
 database, its WAL files when active, and `encore.key`. Stop the Encore process or
