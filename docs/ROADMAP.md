@@ -107,11 +107,11 @@ Milestones M0–M4 with exit criteria are specified in full in
   on that decision (branch protection, Scorecard, private-vulnerability-reporting)
   and the interim, self-imposed discipline in place until then.
 
-## 9. Go-to-market & community
+## 9. Community
 
-FOSS, no monetization plan — deliberate at this scale (`../encore-plans/02-positioning.md`
-§sustainability). GitHub Sponsors on the repo once public; a MetaBrainz donation
-nudge in the README, live from M0.
+A MetaBrainz donation nudge in the README, live from M0 — every self-hosted install
+is independent load on the free, donation-funded upstream infrastructure Encore
+depends on.
 
 ## 10. Legal & compliance
 
