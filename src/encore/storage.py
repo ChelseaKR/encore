@@ -10,8 +10,9 @@ the single-operator deployment model (backup = copy the directory).
 
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,13 +54,35 @@ def resolve_data_dir(explicit: str | Path | None = None) -> Path:
 
 
 def _migration_0001_initial_schema(connection: Connection) -> None:
-    """v1: create the F0 tables (currently just the ``settings`` singleton)."""
+    """v1 (F0): create the initial schema from the current model metadata.
+
+    ``create_all`` (checkfirst) creates whatever the *current* metadata
+    declares, so a fresh database gets the up-to-date schema here and later
+    create-only migrations no-op. Databases written by an older build enter
+    at their recorded ``user_version`` and run only what follows it.
+    """
     SQLModel.metadata.create_all(connection)
+
+
+def _migration_0002_artists_and_library_selection(connection: Connection) -> None:
+    """v2 (F1): create ``artists``; add ``settings.plex_library_keys``.
+
+    Both steps are guarded so this is correct for a fresh database (v1
+    already created everything from current metadata) and for a real v1
+    database written by the F0 build (which lacks both).
+    """
+    SQLModel.metadata.create_all(connection)
+    settings_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(settings)")}
+    if "plex_library_keys" not in settings_columns:
+        connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN plex_library_keys VARCHAR")
 
 
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
-MIGRATIONS: tuple[Callable[[Connection], None], ...] = (_migration_0001_initial_schema,)
+MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
+    _migration_0001_initial_schema,
+    _migration_0002_artists_and_library_selection,
+)
 
 
 def _sqlite_on_connect(dbapi_connection: Any, _connection_record: Any) -> None:
@@ -198,3 +221,23 @@ class Storage:
             if settings.plex_base_url is None or settings.plex_token_cipher is None:
                 return None
             return settings.plex_base_url, self.cipher.decrypt(settings.plex_token_cipher)
+
+    def set_plex_libraries(self, library_keys: Sequence[str] | None) -> None:
+        """Persist the selected music-library keys; ``None`` means all (F1)."""
+        with self.session() as session:
+            settings = self.get_settings(session)
+            settings.plex_library_keys = (
+                None if library_keys is None else json.dumps(list(library_keys))
+            )
+            settings.updated_at = utcnow()
+            session.add(settings)
+            session.commit()
+
+    def get_plex_libraries(self) -> list[str] | None:
+        """Return the selected music-library keys, or ``None`` for "all"."""
+        with self.session() as session:
+            settings = self.get_settings(session)
+            if settings.plex_library_keys is None:
+                return None
+            keys = json.loads(settings.plex_library_keys)
+            return [str(key) for key in keys]

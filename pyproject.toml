@@ -58,6 +58,7 @@ dev = [
     "pip-audit>=2.7",
     "pyyaml>=6.0.3",
     "types-pyyaml>=6.0.12.20260518",
+    "types-requests>=2.33.0.20260518",
 ]
 
 [project.urls]
@@ -111,6 +112,13 @@ warn_unreachable = true
 warn_redundant_casts = true
 mypy_path = "src"
 files = ["src/encore", "tests"]
+
+[[tool.mypy.overrides]]
+# plexapi and apscheduler ship no type information (no stubs, no py.typed).
+# Their objects enter our code as Any at the adapter boundary; our own layers
+# (encore.plex dataclasses, encore.scheduler) restore precise types there.
+module = ["plexapi.*", "apscheduler.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"

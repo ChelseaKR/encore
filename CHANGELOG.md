@@ -8,6 +8,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **F1 Plex library sync (M1, 2026-07-17).** A read-only Plex adapter
+  (`src/encore/plex/`, docs/adr/0007) wraps python-plexapi behind two mechanical
+  guarantees: a transport-level `ReadOnlySession` that raises on any HTTP method
+  other than GET/HEAD/OPTIONS before a byte leaves the process, and a facade
+  whose public surface is asserted by test to contain no mutating operation.
+  `encore plex configure` stores the server URL + token (token prompted or piped,
+  never a CLI flag) and an optional multi-library selection; `encore sync` runs
+  the on-demand inventory (`src/encore/sync.py`): upsert on the Plex rating key,
+  tombstone artists that disappear (row kept, artist unwatched), resurrect them
+  when they return, and skip "Various Artists" compilation pseudo-artists. A
+  background scheduler (`src/encore/scheduler.py`, APScheduler) re-syncs daily by
+  default (`$ENCORE_SYNC_INTERVAL_HOURS`; disabled when no Plex connection is
+  configured; first run one interval out so restart loops never hammer Plex).
+  Contract tests run against recorded-shape Plex XML fixtures including
+  pagination, so a plexapi upgrade that changes endpoints or attributes fails in
+  CI, not in an install. CI stage 8 (responsible-tech guards) is now an explicit
+  blocking step: `make responsible` runs the `read_only_plex`,
+  `no_secrets_in_logs`, and `no_outing` marker tests (the no-outing battery
+  grows with the F4/F5 egress surfaces at M2). Scope honesty: no MusicBrainz
+  matching yet (F2) — synced artists are stored unmatched; nothing is watched or
+  notified yet (F3-F5).
+
 - **Semgrep is now a blocking merge/release gate (SEC-07/SEC-02).** The pinned
   CLI scans `p/default`, `p/python`, and a repository rule that rejects passing
   token/secret/password/credential/taste fields to Python log calls. It runs

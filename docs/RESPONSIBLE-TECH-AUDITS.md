@@ -78,7 +78,8 @@ rather than discovering it after a leak. Source planning material:
 | Data | Why held | Where | Retention | Sensitivity |
 |---|---|---|---|---|
 | Plex base URL + token | library sync (F1) | SQLite, encrypted at rest (`docs/adr/0008`) | until user removes | **High** — grants full Plex access |
-| Artist inventory + play counts | matching, weighting (F2, F9) | SQLite | mirror of Plex; tombstoned on removal | Medium — taste data, inference-rich |
+| Artist inventory (implemented with F1, 2026-07-17: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirror of Plex; tombstoned on removal | Medium — taste data, inference-rich |
+| Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirror of Plex | Medium — taste data |
 | MBID match table | release watching (F3) | SQLite | permanent cache | Low |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials |
 | Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste |

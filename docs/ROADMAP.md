@@ -52,7 +52,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 
 | Metric | Gate | Target | Stage | Current status |
 |---|---|---|---|---|
-| Branch coverage | AUTO (CQ-08) | ≥85% | 4 | Met (96.57% over 20 tests, including F0 storage/secrets) |
+| Branch coverage | AUTO (CQ-08) | ≥85% | 4 | Met (93.91% over 54 tests, including F0 storage/secrets and F1 sync) |
 | mypy --strict errors | AUTO (CQ-06) | 0 | 3 | Met |
 | ruff (format+lint) | AUTO (CQ-04) | 0 findings | 1–2 | Met |
 | Semgrep HIGH/CRIT | AUTO (SEC-07) | 0 | 5 | Met — pinned Semgrep scans `p/default`, `p/python`, and Encore's no-sensitive-values-in-logs rule in `make security`; the committed waiver ledger is empty |
@@ -63,8 +63,8 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Lighthouse a11y | AUTO (A11Y-02) | ≥0.95 | 6 | **N/A today** — F0 has no UI surface; applies from M2 (first real UI) |
 | axe critical/serious/moderate | AUTO (A11Y-01) | 0 | 6 | **N/A today**, same reason |
 | Perf stage | N/A — no measurable hot path exists yet; revisit when a UI/poller creates one | — | 7 | N/A-with-reason (CICD-29) |
-| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | **N/A today** — no Plex/matching code exists; activates with F1 |
-| Read-only-Plex guard | AUTO (project) | pass | 8 | **N/A today**, same reason; activates with F1 |
+| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1 surface (2026-07-17): sync/scheduler logging is sentinel-tested (`no_outing`/`no_secrets_in_logs` markers, blocking via `make responsible` in `make verify` + CI stage 8); the full tripwire battery grows with the F4/F5 egress surfaces (M2) |
+| Read-only-Plex guard | AUTO (project) | pass | 8 | Met (F1, 2026-07-17) — transport-level `ReadOnlySession` rejects non-GET/HEAD/OPTIONS before network I/O, plus a facade no-mutating-verbs assertion (`tests/test_plex_client.py`, `read_only_plex` marker); blocking via `make responsible` |
 | Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
 | Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
 | Workflow SAST (zizmor) | AUTO (CICD-19) | 0 findings | 5 | Met (wired 2026-07-05, `ci.yml`) |
@@ -90,9 +90,10 @@ Milestones M0–M4 with exit criteria are specified in full in
   plans-folder content graduated into repo docs in repo voice (done — this file,
   `README.md`, `docs/RESPONSIBLE-TECH-AUDITS.md`, `docs/I18N.md`, and `docs/adr/`
   are that graduation).
-- **M1 — Sync & match** (in progress; F0 storage prerequisite complete, F1/F2 unbuilt). *Exit:* validation spike committed; ≥90%
+- **M1 — Sync & match** (in progress; F0 storage complete, F1 Plex sync complete
+  2026-07-17, F2 matching unbuilt). *Exit:* validation spike committed; ≥90%
   auto-match on the reference library; the read-only-Plex and no-outing guards land
-  as tests and go merge-blocking.
+  as tests and go merge-blocking (done with F1 — `make responsible`, CI stage 8).
 - **M2 — Watch & alert** (F3–F6, the MVP line). *Exit:* fresh install → test
   notification in <10 min; 24h soak with zero duplicate alerts and zero rate-limit
   violations; a11y gates go merge-blocking with the first real UI.

@@ -3,7 +3,7 @@
 # locally means green in CI (CICD-27).
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format type test cov security todo-gate slo-check citation-check wheel serve verify clean
+.PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check wheel serve verify clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -38,6 +38,9 @@ security: ## SAST + dependency + secret scans (SEC-07/11/13/17)
 		--severity ERROR --error --metrics off --disable-nosem src tests
 	uvx --from semgrep==1.166.0 semgrep test .semgrep-rules
 
+responsible: ## Stage-8 responsible-tech guards: read-only Plex, no-secrets-in-logs, no-outing (M1, DoD §privacy)
+	uv run pytest -q -m "read_only_plex or no_secrets_in_logs or no_outing"
+
 slo-check: ## Validate slos/*.yaml against the Observability Standard §4 schema (OBS-14)
 	uv run python scripts/validate_slos.py slos/
 
@@ -56,7 +59,7 @@ serve: ## Run the dev server
 # The full gate. Determinism + reproducibility: same inputs, same result, every run.
 # CI runs this exact target (ci.yml/release.yml) — there is no second, drifted
 # implementation of "the merge gate" anywhere (CICD-27).
-verify: lint type cov security todo-gate slo-check citation-check wheel ## Run the complete merge gate (format+lint + type + test/cov + security + todo-gate + slo/citation schema checks + wheel build)
+verify: lint type cov security responsible todo-gate slo-check citation-check wheel ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation schema checks + wheel build)
 	@echo "verify: all gates green"
 
 clean: ## Remove caches and build artifacts

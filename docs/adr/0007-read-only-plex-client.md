@@ -19,7 +19,7 @@ All Plex access goes through a thin adapter (`src/encore/plex/`) that wraps
 `python-plexapi` and exposes only read operations. The wrapper is the *only* module
 permitted to import `plexapi` directly (enforced by review via CODEOWNERS, and by a
 unit test that asserts the wrapper's public interface contains no mutating verb —
-`tests/test_read_only_plex.py`, the `read_only_plex` pytest marker).
+`tests/test_plex_client.py`, the `read_only_plex` pytest marker).
 
 ## Consequences
 

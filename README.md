@@ -7,8 +7,8 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · `M1` in progress (F0 storage layer landed; no Plex sync or
-product features yet) · independent personal open-source project ·
+**Status:** pre-alpha · `M1` in progress (F0 storage layer and F1 read-only Plex
+library sync landed; MusicBrainz matching next) · independent personal open-source project ·
 Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
 client material.
 
@@ -20,7 +20,8 @@ make verify    # the full merge gate: format+lint, type, test+coverage, security
 make serve     # run the dev server
 ```
 
-Running the actual product (once Plex sync lands, M1+):
+Running the actual product (the GHCR image publishes at M4 — until then, build the
+image locally with `docker build`):
 
 ```sh
 docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
@@ -72,9 +73,11 @@ encore/
 │   │                          #   the htmx UI + JSON API as features land
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
 │   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
-│   ├── models.py              # SQLModel tables — the settings singleton today
+│   ├── models.py              # SQLModel tables — settings singleton + artists inventory
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
-│   ├── plex/                  # read-only Plex client wrapper (F1)                 [M1]
+│   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
+│   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
+│   ├── scheduler.py           # background sync scheduler (daily default, off w/o creds)
 │   ├── matching/               # MusicBrainz identity matching + review queue (F2)  [M1]
 │   ├── watch/                  # release-group polling + diffing (F3)               [M2]
 │   ├── notify/                  # Apprise fan-out, RSS/iCal feeds (F4, F5)           [M2]

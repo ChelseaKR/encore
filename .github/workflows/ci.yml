@@ -11,11 +11,13 @@ name: ci
 #
 # Stage numbering follows STANDARDS/CI-CD-STANDARD.md §1 (the canonical pipeline):
 #   1 format · 2 lint · 3 type · 4 test · 5 security · 6 a11y · 7 perf · 8 responsible · 9 build
-# In the current F0 storage state, stages 6/7/8 are N/A-with-reason —
-# recorded in docs/ROADMAP.md's metrics ledger, not silently skipped. They go live at the
-# milestone that introduces the surface they gate: 6 (a11y) at M2 (first real UI), 8
-# (responsible: read-only-Plex + no-secrets-in-logs + no-outing guards) at M1 (Plex sync
-# lands). Stage 9 here builds AND scans the image (SEC-28) and proves it boots; the
+# Stages 6/7 are N/A-with-reason (no UI, no hot path yet) — recorded in
+# docs/ROADMAP.md's metrics ledger, not silently skipped; 6 (a11y) goes live at M2
+# (first real UI). Stage 8 (responsible: read-only-Plex + no-secrets-in-logs +
+# no-outing guards) went live with F1 (Plex sync, M1): `make responsible` runs the
+# marker-selected guard tests as an explicit blocking step — the no-outing battery
+# grows with the F4/F5 egress surfaces (M2).
+# Stage 9 here builds AND scans the image (SEC-28) and proves it boots; the
 # signing/SBOM/provenance release path is a separate workflow that runs on tags (M4
 # scope, docs/adr/0008).
 on:
@@ -68,6 +70,8 @@ jobs:
         run: make type
       - name: Stage 4 — test with coverage (branch >=85%)
         run: make cov
+      - name: Stage 8 — responsible-tech guards (read-only Plex · no-secrets-in-logs · no-outing)
+        run: make responsible
       - name: SLO schema (OBS-14) + CITATION.cff (DOC-08) checks
         if: matrix.python == '3.12'
         run: |
