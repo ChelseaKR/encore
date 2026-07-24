@@ -1,8 +1,8 @@
 # Release pipeline (M4 scope, docs/adr/0008-secrets-at-rest-scheme.md's sibling
 # ADR on release integrity — full signing/SBOM/provenance chain).
 #
-# Pre-release: wired and shaped correctly, but only fires on a signed vX.Y.Z tag,
-# which does not exist yet. Re-runs the literal `make verify` at the tagged commit
+# A maintainer runs the reviewed workflow from main with an existing signed
+# vX.Y.Z tag. It re-runs the literal `make verify` at the tagged commit
 # (REL-14, P0-4) before building — lint, type, test/coverage, AND security
 # (Semgrep + pip-audit + osv-scanner + gitleaks), the exact same target a contributor runs locally, so a
 # release can never ship a commit that didn't pass its own gate. (Earlier version
@@ -12,20 +12,30 @@
 name: release
 
 on:
-  push:
-    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing signed stable SemVer tag (vX.Y.Z)"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   verify-at-tag:
     name: re-verify at tagged commit (make verify)
     runs-on: ubuntu-latest
+    outputs:
+      release_commit: ${{ steps.tag.outputs.commit }}
+      release_tag: ${{ steps.tag.outputs.tag }}
+      tag_object_sha: ${{ steps.tag.outputs.tag_object_sha }}
+    permissions:
+      contents: read
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -34,13 +44,38 @@ jobs:
           disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          fetch-depth: 0  # gitleaks (inside `make verify`) needs full history
+          ref: main
+          fetch-depth: 0
           persist-credentials: false
+      - name: Resolve and verify the reviewed signed tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG}"
+          test "${GITHUB_REF}" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+          [[ "${TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          test "$(git cat-file -t "refs/tags/${TAG}")" = tag
+          RELEASE_COMMIT="$(git rev-parse --verify "${TAG}^{commit}")"
+          git merge-base --is-ancestor "${RELEASE_COMMIT}" origin/main
+          git config gpg.format ssh
+          git config gpg.ssh.allowedSignersFile "${GITHUB_WORKSPACE}/.github/allowed_signers"
+          git verify-tag -- "${TAG}"
+          {
+            echo "tag=${TAG}"
+            echo "commit=${RELEASE_COMMIT}"
+            echo "tag_object_sha=$(git rev-parse "refs/tags/${TAG}")"
+          } >> "${GITHUB_OUTPUT}"
+          git checkout --detach "${RELEASE_COMMIT}"
       - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3  # v8.3.0
         with:
           python-version: "3.12"
           # setup-uv enables its cache by default; explicitly turned off here
-          # (unlike ci.yml): this workflow runs on a tag push, and a cross-run
+          # (unlike ci.yml): this workflow publishes release artifacts, and a cross-run
           # uv/pip cache is exactly the cache-poisoning surface zizmor flags on
           # release pipelines — a poisoned cache entry could ride into a signed,
           # published artifact. ci.yml runs on mutable branches/PRs where that
@@ -58,12 +93,17 @@ jobs:
           chmod +x /usr/local/bin/osv-scanner
       - name: CHANGELOG carries a section for this tag (REL-10)
         # A release must not tag a commit whose CHANGELOG has no matching
-        # `## [X.Y.Z]` section. GITHUB_REF_NAME is the runner-provided env var
-        # (no `${{ }}` interpolation — template-injection-safe for zizmor).
+        # `## [X.Y.Z]` section. The verified tag is routed through the
+        # environment rather than interpolated into the shell.
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PACKAGE_VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          test "${VERSION}" = "${PACKAGE_VERSION}"
           grep -Fq "## [${VERSION}]" CHANGELOG.md || {
-            echo "CHANGELOG.md has no '## [${VERSION}]' section for tag ${GITHUB_REF_NAME}" >&2
+            echo "CHANGELOG.md has no '## [${VERSION}]' section for tag ${TAG}" >&2
             exit 1
           }
       - name: make install
@@ -72,13 +112,13 @@ jobs:
         run: make verify
 
   build-sign-publish:
-    name: build · SBOM · sign · publish (GHCR)
+    name: build · scan · package
     runs-on: ubuntu-latest
     needs: [verify-at-tag]
     permissions:
       contents: read
-      packages: write
-      id-token: write  # keyless cosign (SEC-29)
+      id-token: write
+      attestations: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -87,20 +127,62 @@ jobs:
           disable-telemetry: true
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
+          ref: ${{ needs.verify-at-tag.outputs.release_commit }}
           persist-credentials: false
+      - uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3  # v8.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Generate CycloneDX SBOM
+        run: |
+          uv sync --locked --no-dev
+          uvx --from cyclonedx-bom==7.3.0 cyclonedx-py environment .venv \
+            --sv 1.7 --of JSON --pyproject pyproject.toml \
+            --output-reproducible --validate -o dist/encore.cdx.json
+      - name: Record distribution digests
+        run: (cd dist && sha256sum ./*.whl ./*.tar.gz > SHA256SUMS)
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: "dist/*.whl,dist/*.tar.gz"
       - name: Build image
-        run: docker build -t "ghcr.io/chelseakr/encore:${GITHUB_REF_NAME}" .
+        env:
+          TAG: ${{ needs.verify-at-tag.outputs.release_tag }}
+        run: docker build -t "ghcr.io/chelseakr/encore:${TAG}" .
       - name: Container CVE scan (Trivy, SEC-28) — gate the release, not just CI
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
-          image-ref: "ghcr.io/chelseakr/encore:${{ github.ref_name }}"
+          image-ref: "ghcr.io/chelseakr/encore:${{ needs.verify-at-tag.outputs.release_tag }}"
           severity: "CRITICAL,HIGH"
           exit-code: "1"
           ignore-unfixed: true
-      # TODO (pre-v0.1.0, M4, tracked in docs/ROADMAP.md §8's M4 exit criteria):
-      # log in to GHCR, push by digest (never :latest — REL-18), generate a
-      # CycloneDX SBOM (SEC-27), keyless cosign-sign + attach SLSA provenance
-      # (SEC-29), attach SBOM+provenance+CHANGELOG to the GitHub release (REL-20).
-      # The container scan above already runs for real (SEC-28) — left is the
-      # publish/sign/provenance chain, unimplemented until there is an actual
-      # release to ship. A stub that always passed would be a false-green gate.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+
+  publish-release:
+    name: recheck tag · publish without checkout
+    needs: [verify-at-tag, build-sign-publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: dist
+      - name: Recheck immutable tag object and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify-at-tag.outputs.release_tag }}
+          TAG_OBJECT_SHA: ${{ needs.verify-at-tag.outputs.tag_object_sha }}
+        run: |
+          set -euo pipefail
+          LIVE_TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha)"
+          test "${LIVE_TAG_OBJECT}" = "${TAG_OBJECT_SHA}"
+          gh release create "${TAG}" dist/* \
+            --title "encore ${TAG}" --generate-notes --verify-tag

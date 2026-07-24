@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release publication now has a trusted-main control plane.** A read-only
+  verifier checks an existing SSH-signed stable tag, signer, main ancestry,
+  package version, changelog, and the full gate. The exact verified commit
+  produces distributions, SBOM, provenance, and a scanned image; a separate
+  checkout-free publisher rechecks the tag object before creating the release.
+
 ### Added
 
 - **F2 MusicBrainz identity matching + review queue (M1, 2026-07-17).**
