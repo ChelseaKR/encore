@@ -8,6 +8,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Give the pre-UI Accessibility N/A state an explicit reason in the standards
+  register so automated conformance does not accept an unexplained exemption.
 - **F2 MusicBrainz identity matching + review queue (M1, 2026-07-17).**
   `src/encore/matching/`: a polite MusicBrainz WS/2 search client (descriptive
   User-Agent, process-global 1 req/s rate limiter that F3 must reuse,

@@ -126,7 +126,7 @@ never committed. Per-repo *values* live in [`docs/ROADMAP.md`](docs/ROADMAP.md) 
 | CI/CD | ✅ | Single `ci.yml`, ordered stages; least-privilege tokens; SHA-pinned actions; Harden-Runner (audit mode) on every workflow; `make verify` is the literal command CI and `release.yml` run, not a parallel reimplementation |
 | Security & Supply-Chain | ✅ | ASVS **L2** (holds a Plex token + taste data) — pinned Semgrep (`p/default`, `p/python`, custom no-sensitive-log rule; zero waivers), pip-audit + osv-scanner + gitleaks (locked env, pre-commit + CI + weekly full-history TruffleHog sweep), CodeQL (python + actions), zizmor, Trivy on every container build; cosign+SBOM **at first tagged release (M4)** |
 | Release & Versioning | ✅ | SemVer; signed tags (from M4, first release); Keep-a-Changelog; GHCR by digest, never `:latest` |
-| Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A today**: F0 has no UI surface; goes merge-blocking at M2 (first real UI) |
+| Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A — no UI surface today**; becomes merge-blocking at M2 with the first real UI |
 | Observability | ✅ | Tier A (running service) — `/livez`+`/readyz` today; structured JSON logs + PII/secret redaction **land at M1–M2** with the routes/pollers they measure (`docs/ROADMAP.md` §11) |
 | Internationalization | **N/A — no user-facing strings at M0** | Gettext seam activates at M2 when the first user-facing string ships — see [`docs/I18N.md`](docs/I18N.md) |
 | AI Evaluation | **N/A — no LLM/model** | Flips to Applies if F14 ("vibe" recs) ever lands; accepted decision in ADR-0009 |
