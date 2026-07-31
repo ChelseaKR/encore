@@ -25,11 +25,39 @@ def test_livez_ok_without_lifespan(tmp_path: Path) -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_readyz_ok_with_open_storage(tmp_path: Path) -> None:
+def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Fresh install: DB open, sync scheduler idle (no Plex credentials yet),
+    # watch scheduler running (keyless, starts by default).
+    monkeypatch.delenv("ENCORE_SYNC_INTERVAL_HOURS", raising=False)
+    monkeypatch.delenv("ENCORE_WATCH_INTERVAL_HOURS", raising=False)
     with TestClient(create_app(tmp_path)) as client:
         response = client.get("/readyz")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "checks": {"db": "ok"}}
+    assert response.json() == {
+        "status": "ok",
+        "checks": {"db": "ok", "sync_scheduler": "idle", "watch_scheduler": "ok"},
+    }
+
+
+def test_readyz_503_when_a_started_scheduler_has_died(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # OBS-20 (M2-F3): a scheduler that started and then stopped means data
+    # will silently go stale — the instance must report unready.
+    class DeadScheduler:
+        running = False
+
+        def shutdown(self, *, wait: bool) -> None:
+            """Accept the lifespan's shutdown call."""
+
+    monkeypatch.setattr(app_module, "build_watch_scheduler", lambda _storage: DeadScheduler())
+    with TestClient(create_app(tmp_path)) as client:
+        response = client.get("/readyz")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "unready"
+    assert body["checks"]["watch_scheduler"] == "stopped"
+    assert body["checks"]["db"] == "ok"
 
 
 def test_readyz_503_before_startup(tmp_path: Path) -> None:

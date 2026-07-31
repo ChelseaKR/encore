@@ -63,19 +63,19 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Lighthouse a11y | AUTO (A11Y-02) | ≥0.95 | 6 | **N/A today** — F0 has no UI surface; applies from M2 (first real UI) |
 | axe critical/serious/moderate | AUTO (A11Y-01) | 0 | 6 | **N/A today**, same reason |
 | Perf stage | N/A — no measurable hot path exists yet; revisit when a UI/poller creates one | — | 7 | N/A-with-reason (CICD-29) |
-| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1 + F2 surfaces (2026-07-17): sync/scheduler logging is sentinel-tested and the matching layer's `no_outing`/`no_secrets_in_logs` marker tests prove artist names/MBIDs/token never reach logs or outbound MB requests (blocking via `make responsible` in `make verify` + CI stage 8); the full tripwire battery through feeds/notifications grows with the F4/F5 egress surfaces (M2) |
+| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1 + F2 + F3 surfaces (2026-07-31): sync/scheduler logging is sentinel-tested, the matching layer's `no_outing`/`no_secrets_in_logs` marker tests prove artist names/MBIDs/token never reach logs or outbound MB requests, and the F3 watch layer's marker tests extend the same guarantee to release MBIDs/titles at every log level (blocking via `make responsible` in `make verify` + CI stage 8); the full tripwire battery through feeds/notifications grows with the F4/F5 egress surfaces (M2) |
 | Read-only-Plex guard | AUTO (project) | pass | 8 | Met (F1, 2026-07-17) — transport-level `ReadOnlySession` rejects non-GET/HEAD/OPTIONS before network I/O, plus a facade no-mutating-verbs assertion (`tests/test_plex_client.py`, `read_only_plex` marker); blocking via `make responsible` |
 | Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
 | Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
 | Workflow SAST (zizmor) | AUTO (CICD-19) | 0 findings | 5 | Met (wired 2026-07-05, `ci.yml`) |
 | CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Wired 2026-07-05 (`codeql.yml`); automatic triggers restored 2026-07-14; same account-budget caveat as the CodeQL row above |
-| SLO schema (`slos/*.yaml`) | AUTO (OBS-14) | conforms | 4 | Met — `make slo-check` (`scripts/validate_slos.py`, wired 2026-07-09); the SLI query itself stays a documented placeholder until the F3 poller exists (M2) |
+| SLO schema (`slos/*.yaml`) | AUTO (OBS-14) | conforms | 4 | Met — `make slo-check` (`scripts/validate_slos.py`, wired 2026-07-09); the F3 poller now exists (2026-07-31) but the poll-freshness SLI query stays a documented placeholder until a metrics surface ships (RED metrics land with the M2 routes) |
 | CITATION.cff validity | AUTO (DOC-08) | valid | 4 | Met — `make citation-check` (pinned cffconvert via uvx, wired 2026-07-09) |
 | Wheel/sdist build | AUTO (CQ-10) | builds | 9 | Met — `make wheel` (`uv build`) in `make verify` + CI (wired 2026-07-09); container is no longer the only artifact |
 | CHANGELOG section at tag | AUTO (REL-10) | present | 9 | Met — grep gate in `release.yml` `verify-at-tag` (wired 2026-07-09); fires at first tag |
 | Full-history secret scan (TruffleHog, verified) | AUTO (SEC-19) | 0 verified | 5 | Met — weekly, `.github/workflows/trufflehog.yml` (wired 2026-07-05) |
 | CI egress policy (Harden-Runner) | AUTO (SEC-04) | audit today | 1–9 | Met at `audit` — every workflow; flips to `block` once the steady-state endpoint allowlist is known from a few runs' telemetry |
-| MB rate-limit violations (soak counter) | AUTO (project) | 0 | 4 | N/A — no polling code exists yet; applies from M2 |
+| MB rate-limit violations (soak counter) | AUTO (project) | 0 | 4 | Polling code exists (F3, 2026-07-31): all MB traffic — search and browse — shares one process-global 1 req/s limiter, tested at the unit level; the soak *counter* itself needs a real 24h deployment and lands with the M2 exit soak |
 | Auto-match precision (fixture library) | AUTO (project) | ≥95% fixtures; ≥90% field | 4 | **Fixture half met (F2, 2026-07-17)** — the 22-case known-nasty battery in `tests/test_matching_engine.py` gates ≥95% correct decisions and zero wrong auto-matches on every run; the ≥90% field half needs the U8 validation spike on a real library, which also freezes the provisional thresholds |
 
 No row is a bare `N/A` — every one carries its reason and the milestone it activates
@@ -95,7 +95,9 @@ Milestones M0–M4 with exit criteria are specified in full in
   validation spike committed; ≥90% auto-match on the reference library; the
   read-only-Plex and no-outing guards land as tests and go merge-blocking (done
   with F1/F2 — `make responsible`, CI stage 8).
-- **M2 — Watch & alert** (F3–F6, the MVP line). *Exit:* fresh install → test
+- **M2 — Watch & alert** (F3–F6, the MVP line; F3 release watching complete
+  2026-07-31 — poller, diff engine, baseline seeding per `docs/adr/0011`,
+  events table, second scheduler, `encore watch`). *Exit:* fresh install → test
   notification in <10 min; 24h soak with zero duplicate alerts and zero rate-limit
   violations; a11y gates go merge-blocking with the first real UI.
 - **M3 — Discover** (F7–F10). *Exit:* rec page <2s from cache; noise budget honored;

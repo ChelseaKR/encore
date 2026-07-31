@@ -20,7 +20,17 @@ from sqlalchemy import Connection, event
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from encore.models import MATCH_STATUSES, SETTINGS_ROW_ID, AppSettings, ArtistMatch, utcnow
+from encore.models import (
+    MATCH_STATUSES,
+    RELEASE_EVENT_KINDS,
+    SETTINGS_ROW_ID,
+    AppSettings,
+    Artist,
+    ArtistMatch,
+    ReleaseEvent,
+    ReleaseGroup,
+    utcnow,
+)
 from encore.secretstore import SecretCipher, SecretKeyError
 
 __all__ = [
@@ -82,12 +92,18 @@ def _migration_0003_artist_matches(connection: Connection) -> None:
     SQLModel.metadata.create_all(connection)
 
 
+def _migration_0004_release_watching(connection: Connection) -> None:
+    """v4 (F3): create ``release_groups`` + ``events`` (guarded — no-op on fresh)."""
+    SQLModel.metadata.create_all(connection)
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0001_initial_schema,
     _migration_0002_artists_and_library_selection,
     _migration_0003_artist_matches,
+    _migration_0004_release_watching,
 )
 
 
@@ -340,3 +356,107 @@ class Storage:
             session.commit()
             session.refresh(row)
         return row
+
+    # -- release watching (F3) -------------------------------------------------
+
+    def list_watched_artist_mbids(self) -> list[str]:
+        """Distinct MBIDs to poll: matched artists still present in Plex.
+
+        Joins ``artist_matches`` (status ``auto``/``manual``, non-NULL MBID)
+        to ``artists`` on the Plex rating key and excludes tombstoned rows —
+        this is what makes "removal unwatches on next sync" (F1 acceptance)
+        true without F3 keeping its own bookkeeping.
+        """
+        with self.session() as session:
+            statement = (
+                select(ArtistMatch.mbid)
+                .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
+                .where(
+                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                    ArtistMatch.mbid.is_not(None),  # type: ignore[union-attr]
+                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                )
+                .distinct()
+            )
+            return [mbid for mbid in session.exec(statement).all() if mbid is not None]
+
+    def list_release_groups(self, artist_mbid: str) -> list[ReleaseGroup]:
+        """All release-groups already recorded for one artist MBID."""
+        with self.session() as session:
+            statement = select(ReleaseGroup).where(ReleaseGroup.artist_mbid == artist_mbid)
+            return list(session.exec(statement).all())
+
+    def has_release_groups(self, artist_mbid: str) -> bool:
+        """Whether any release-group row exists for this artist (baseline test)."""
+        with self.session() as session:
+            statement = (
+                select(ReleaseGroup.id).where(ReleaseGroup.artist_mbid == artist_mbid).limit(1)
+            )
+            return session.exec(statement).first() is not None
+
+    def add_release_group(
+        self,
+        artist_mbid: str,
+        mbid: str,
+        title: str,
+        primary_type: str | None,
+        secondary_types: Sequence[str],
+        first_release_date: str,
+    ) -> ReleaseGroup:
+        """Record a newly seen release-group."""
+        row = ReleaseGroup(
+            artist_mbid=artist_mbid,
+            mbid=mbid,
+            title=title,
+            primary_type=primary_type,
+            secondary_types_json=json.dumps(list(secondary_types)) if secondary_types else None,
+            first_release_date=first_release_date,
+        )
+        with self.session() as session:
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def update_release_group_date(self, mbid: str, first_release_date: str) -> ReleaseGroup:
+        """Record a revised first-release date on an already-seen group.
+
+        Raises:
+            StorageError: no release-group row exists for ``mbid``.
+        """
+        with self.session() as session:
+            statement = select(ReleaseGroup).where(ReleaseGroup.mbid == mbid)
+            row = session.exec(statement).first()
+            if row is None:
+                # The offending MBID is deliberately not echoed — error strings
+                # end up in logs, and MBIDs are taste data (dpia.md §4).
+                raise StorageError("no release-group row exists for that MBID")
+            row.first_release_date = first_release_date
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def add_event(self, release_group_id: int, kind: str) -> ReleaseEvent:
+        """Append one release event (F4/F5 consume these; ``notified_at`` NULL).
+
+        Raises:
+            StorageError: ``kind`` is not one of `encore.models.RELEASE_EVENT_KINDS`.
+        """
+        if kind not in RELEASE_EVENT_KINDS:
+            raise StorageError(f"invalid event kind {kind!r}; expected {RELEASE_EVENT_KINDS}")
+        event_row = ReleaseEvent(release_group_id=release_group_id, kind=kind)
+        with self.session() as session:
+            session.add(event_row)
+            session.commit()
+            session.refresh(event_row)
+        return event_row
+
+    def list_events(self, kind: str | None = None) -> list[ReleaseEvent]:
+        """Release events, oldest first, optionally filtered by kind."""
+        with self.session() as session:
+            statement = select(ReleaseEvent).order_by(ReleaseEvent.created_at)  # type: ignore[arg-type]
+            if kind is not None:
+                statement = statement.where(ReleaseEvent.kind == kind)
+            return list(session.exec(statement).all())

@@ -1,12 +1,12 @@
 """The FastAPI app factory.
 
-M1 scope (F0 + F1): health endpoints, the storage layer, and the background
-sync scheduler. `/livez` and `/readyz` are kept distinct per OBS-18/19/20 —
-`readyz` performs a real database check (storage opens at startup; the probe
-runs a trivial query per request); the scheduler-heartbeat check joins it at
-M2 with the MusicBrainz poller (F3). `livez` never depends on anything but
-the process being up, so it can't false-negative during a slow dependency
-check.
+Scope so far (F0 + F1 + F3): health endpoints, the storage layer, and the two
+background schedulers (Plex sync, MusicBrainz release watch). `/livez` and
+`/readyz` are kept distinct per OBS-18/19/20 — `readyz` performs a real
+database check plus a scheduler check (a started scheduler that has died
+makes the instance unready; a deliberately disabled or credential-gated one
+does not). `livez` never depends on anything but the process being up, so it
+can't false-negative during a slow dependency check.
 """
 
 from __future__ import annotations
@@ -19,8 +19,32 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from encore import __version__
-from encore.scheduler import build_sync_scheduler
+from encore.scheduler import build_sync_scheduler, build_watch_scheduler
 from encore.storage import Storage, StorageError
+
+# readyz check name → app.state attribute holding the (optional) scheduler.
+_SCHEDULER_CHECKS = (("sync_scheduler", "scheduler"), ("watch_scheduler", "watch_scheduler"))
+
+
+def _scheduler_statuses(app: FastAPI) -> tuple[dict[str, str], bool]:
+    """Scheduler readyz statuses (OBS-20) and whether any dead one blocks readiness.
+
+    A scheduler that was started and has since died means silently stale
+    data — unready. One that never started (disabled via env, or sync
+    without credentials) is a documented idle state, not a failure.
+    """
+    checks: dict[str, str] = {}
+    unready = False
+    for name, attr in _SCHEDULER_CHECKS:
+        running = getattr(app.state, attr, None)
+        if running is None:
+            checks[name] = "idle"
+        elif running.running:
+            checks[name] = "ok"
+        else:
+            checks[name] = "stopped"
+            unready = True
+    return checks, unready
 
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
@@ -40,12 +64,15 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.storage = Storage(data_dir)
         app.state.scheduler = build_sync_scheduler(app.state.storage)
+        app.state.watch_scheduler = build_watch_scheduler(app.state.storage)
         try:
             yield
         finally:
-            if app.state.scheduler is not None:
-                app.state.scheduler.shutdown(wait=False)
-                app.state.scheduler = None
+            for attr in ("scheduler", "watch_scheduler"):
+                running = getattr(app.state, attr, None)
+                if running is not None:
+                    running.shutdown(wait=False)
+                    setattr(app.state, attr, None)
             app.state.storage.close()
             app.state.storage = None
 
@@ -72,7 +99,12 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 status_code=503,
                 content={"status": "unready", "checks": {"db": "unavailable"}},
             )
-        return JSONResponse(status_code=200, content={"status": "ok", "checks": {"db": "ok"}})
+        # Scheduler check (M2-F3, OBS-20) — see _scheduler_statuses.
+        scheduler_checks, unready = _scheduler_statuses(app)
+        checks: dict[str, str] = {"db": "ok", **scheduler_checks}
+        if unready:
+            return JSONResponse(status_code=503, content={"status": "unready", "checks": checks})
+        return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})
 
     return app
 
