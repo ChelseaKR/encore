@@ -33,6 +33,19 @@ marker tests, which also pin that artist names/MBIDs never appear in log
 output (httpx request-URL logging is suppressed in the MB client for this
 reason). No *new* data class was added; the full regeneration against the
 real schema remains due at M1 exit.
+**F3 update (2026-07-31):** release watching now exists (`src/encore/watch/`,
+`release_groups` + `events` tables). The new data class is **derived taste
+data**: per matched artist, MusicBrainz release-group MBIDs, titles, types,
+and first-release dates, plus an event log (`new`/`upcoming`/`date_changed`)
+with a `notified_at` delivery cursor — all local-only, retained as a permanent
+diff baseline. No new *outbound* data class: the poll sends only artist MBIDs
+(already-disclosed identifiers from the F2 flow) to musicbrainz.org over the
+same rate-limited, descriptive-User-Agent channel, tied to the operator's IP
+exactly as already disclosed below. The event log records *releases* observed,
+never user behavior — it is not a listening/usage log. `no_outing` marker
+tests extend to this layer: artist names, MBIDs, and release titles never
+appear in log output at any level. The full regeneration against the real
+schema remains due at M1 exit.
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14
@@ -85,6 +98,7 @@ Encore does with that access rather than trying to avoid holding it.
 | Artist inventory (implemented with F1: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | Artist names go to MusicBrainz as search queries at match time (F2, the disclosed MetaBrainz flow below); never play counts |
 | Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirrors Plex | Medium — taste data | Never shared — local weighting only |
 | MBID match table (`artist_matches`: name, MBID, confidence, status, candidates) | identity matching + review queue (F2); release watching (F3) | SQLite | permanent cache; manually re-matchable/skippable | Medium — artist names + candidate lists are taste data | Not shared; internal cache. Artist names go to MusicBrainz as search queries at match time (the disclosed MetaBrainz flow below) |
+| Release-group + event tables (implemented with F3: MBIDs, titles, types, first-release dates, event kinds, delivery cursor) | release watching diff baseline (F3); delivery queue (F4/F5) | SQLite | permanent diff baseline | Medium — derived taste data (what the user's artists release, not what the user plays) | Not shared; artist MBIDs go to MusicBrainz in browse queries at poll time (the same disclosed MetaBrainz flow) |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials | Whatever destination the user configured (their own Discord/ntfy/SMTP/etc.) |
 | Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste | Whoever the user shares the feed URL with (their choice) |
 | Optional ListenBrainz username (F11, not yet built) | account linking | SQLite | until unlinked | Medium | ListenBrainz (by definition of linking an account there) |

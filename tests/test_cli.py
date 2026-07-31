@@ -172,3 +172,35 @@ def test_commands_report_an_unusable_data_directory(
 
     assert (configure_exit, sync_exit) == (1, 1)
     assert capsys.readouterr().err.count("cannot create data directory") == 2
+
+
+def test_watch_runs_a_cycle_and_prints_counts_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Empty database: a watch cycle is a free no-op (zero requests), and the
+    # report prints counts only — never artist names or MBIDs.
+    class FakeMBClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_client = FakeMBClient()
+    monkeypatch.setattr(cli, "MusicBrainzClient", lambda: fake_client)
+
+    assert cli.main(["watch", "--data-dir", str(tmp_path)]) == 0
+
+    captured = capsys.readouterr()
+    assert "watch complete: polled=0 failed=0" in captured.out
+    assert fake_client.closed
+
+
+def test_watch_reports_an_unusable_data_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    not_a_directory = tmp_path / "regular-file"
+    not_a_directory.write_text("occupied", encoding="utf-8")
+
+    assert cli.main(["watch", "--data-dir", str(not_a_directory)]) == 1
+    assert "cannot create data directory" in capsys.readouterr().err

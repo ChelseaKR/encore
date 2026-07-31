@@ -1,10 +1,10 @@
 """SQLModel table definitions — the schema's first cut (encore-plans/04).
 
-M1 scope so far: the ``settings`` singleton (F0), the ``artists`` inventory
-(F1), and the ``artist_matches`` identity cache + review queue (F2).
-Release-groups, events, channels, and recommendations land with the features
-that read and write them (F3-F7), each added by its own migration in
-`encore.storage`.
+Scope so far: the ``settings`` singleton (F0), the ``artists`` inventory
+(F1), the ``artist_matches`` identity cache + review queue (F2), and the
+``release_groups`` + ``events`` watch tables (F3). Channels and
+recommendations land with the features that read and write them (F4-F7),
+each added by its own migration in `encore.storage`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,16 @@ from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
 
-__all__ = ["MATCH_STATUSES", "SETTINGS_ROW_ID", "AppSettings", "Artist", "ArtistMatch"]
+__all__ = [
+    "MATCH_STATUSES",
+    "RELEASE_EVENT_KINDS",
+    "SETTINGS_ROW_ID",
+    "AppSettings",
+    "Artist",
+    "ArtistMatch",
+    "ReleaseEvent",
+    "ReleaseGroup",
+]
 
 SETTINGS_ROW_ID = 1
 
@@ -94,3 +103,53 @@ class ArtistMatch(SQLModel, table=True):
     candidates_json: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ReleaseGroup(SQLModel, table=True):
+    """One MusicBrainz release-group seen for a watched artist (F3).
+
+    Release-*group* level, not release level (docs/adr/0001): the fourteen
+    editions of the same album share one group, so reissues and edition-adds
+    never look like news. ``first_release_date`` keeps MusicBrainz's partial
+    date text verbatim (``YYYY``, ``YYYY-MM``, or ``YYYY-MM-DD``; empty when
+    MB has none) — parsing happens at diff time, never at storage time.
+    ``artist_mbid`` links to the matched identity, not the Plex row, so a
+    manual re-match (F2) naturally re-scopes the watch. Titles and MBIDs are
+    taste data (docs/audits/dpia.md §4) — local only, never logged.
+    """
+
+    __tablename__ = "release_groups"
+
+    id: int | None = Field(default=None, primary_key=True)
+    mbid: str = Field(unique=True, index=True)
+    artist_mbid: str = Field(index=True)
+    title: str
+    primary_type: str | None = Field(default=None)
+    secondary_types_json: str | None = Field(default=None)
+    first_release_date: str = Field(default="")
+    first_seen_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# Valid ReleaseEvent.kind values. "new" is a released (or undated) group first
+# seen after the artist's baseline; "upcoming" is a future-dated group
+# (announcements become calendar entries — F5); "date_changed" records a
+# first-release-date revision on an already-seen group.
+RELEASE_EVENT_KINDS = ("new", "upcoming", "date_changed")
+
+
+class ReleaseEvent(SQLModel, table=True):
+    """One release-watch observation for delivery (F3 writes, F4/F5 read).
+
+    ``notified_at`` stays ``NULL`` until F4 delivers the event — it is the
+    delivery queue's cursor, created here so the F3 diff and the F4 fan-out
+    share one table instead of a table and a shadow queue.
+    """
+
+    __tablename__ = "events"
+
+    id: int | None = Field(default=None, primary_key=True)
+    release_group_id: int = Field(foreign_key="release_groups.id", index=True)
+    kind: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    notified_at: datetime | None = Field(default=None)

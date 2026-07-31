@@ -8,6 +8,33 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **F3 release watching (M2, 2026-07-31).** `src/encore/watch/`: the MusicBrainz
+  release-group poller and diff engine (docs/adr/0001 + new docs/adr/0011).
+  The WS/2 client gains a paginated `browse_release_groups` that draws from the
+  **same process-global 1 req/s rate limiter** as F2's search — one MetaBrainz
+  budget, never two (encore-plans/04's load-bearing math), with `Retry-After`
+  honored and a defensive per-artist page cap. New `release_groups` + `events`
+  tables (migration v4) record the diff: first poll of an artist **baselines
+  the back catalog silently** (no notification flood on day one); after that,
+  unseen groups become `new` events, future-dated groups become `upcoming`
+  (announcements pierce the baseline — they feed the F5 calendar), and revised
+  first-release dates become `date_changed`. Reissues/edition-adds of a seen
+  group can never re-alert, by construction. Watched artists = matched
+  (`auto`/`manual`) AND still present in Plex — tombstoned artists unwatch on
+  the next cycle (F1 acceptance). A second background scheduler (`mb-watch`,
+  `$ENCORE_WATCH_INTERVAL_HOURS`, default daily, first run one interval out,
+  coalesce-after-downtime — skip-don't-queue, risk R8) runs the cycle;
+  `encore watch` runs it on demand; `/readyz` now includes the promised
+  scheduler check (a started-then-dead scheduler is unready; disabled/idle is
+  not). Per-artist MetaBrainz failures are counted and skipped, never queued.
+  `no_outing` marker tests pin that artist names, MBIDs, and release titles
+  never reach a log line at any level. Scope honesty: events are recorded, not
+  yet delivered (F4 Apprise fan-out and F5 feeds are next); cover-art capture
+  (Cover Art Archive) lands with F4's rendering, so no `cover_url` column yet;
+  polling is sequential under the shared limiter rather than staggered across
+  the day — the limiter, not stagger, is the politeness guarantee; the
+  24h-soak / zero-rate-limit-violation acceptance needs a real deployment.
+
 - **F2 MusicBrainz identity matching + review queue (M1, 2026-07-17).**
   `src/encore/matching/`: a polite MusicBrainz WS/2 search client (descriptive
   User-Agent, process-global 1 req/s rate limiter that F3 must reuse,

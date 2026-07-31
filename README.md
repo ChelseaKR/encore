@@ -78,10 +78,11 @@ encore/
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
 │   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
-│   ├── scheduler.py           # background sync scheduler (daily default, off w/o creds)
+│   ├── scheduler.py           # background schedulers: Plex sync + MB release watch
 │   ├── matching/              # MusicBrainz matching + review queue (F2)
 │   │                          #   client/scorer/engine + artist_matches cache
-│   ├── watch/                  # release-group polling + diffing (F3)               [M2]
+│   ├── watch/                 # F3 release watching: poll release-groups, diff,
+│   │                          #   baseline-seed, emit new/upcoming/date_changed events
 │   ├── notify/                  # Apprise fan-out, RSS/iCal feeds (F4, F5)           [M2]
 │   └── recommend/              # ListenBrainz labs similar-artists (F7, F8)          [M3]
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/

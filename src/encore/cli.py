@@ -1,9 +1,10 @@
-"""Console-script entry point: serve, sync, and Plex configuration.
+"""Console-script entry point: serve, sync, watch, and Plex configuration.
 
 `encore serve` runs the app under uvicorn; `encore plex configure` stores
 Plex credentials (token prompted or piped, never a CLI argument — flags leak
-into shell history); `encore sync` is the on-demand library sync (F1). The
-scheduled path lives in `encore.scheduler`.
+into shell history); `encore sync` is the on-demand library sync (F1);
+`encore watch` is the on-demand release-watch cycle (F3). The scheduled
+paths live in `encore.scheduler`.
 """
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ import sys
 # mypy treats as private to this module.
 import uvicorn as uvicorn
 
+from encore.matching.mb import MusicBrainzClient
 from encore.plex import PlexMusicClient, PlexWriteAttemptError
 from encore.secretstore import SecretDecryptionError
 from encore.storage import DATA_DIR_ENV, Storage, StorageError, resolve_data_dir
 from encore.sync import SyncError, sync_artists
+from encore.watch import watch_all_artists
 
 _DATA_DIR_HELP = (
     "Directory holding the SQLite database and its Fernet key file "
@@ -49,6 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="KEY",
         help="Music library key to sync (repeatable; default: stored selection, else all)",
     )
+
+    watch = subparsers.add_parser(
+        "watch", help="Run one on-demand MusicBrainz release-watch cycle (F3)"
+    )
+    watch.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
 
     plex = subparsers.add_parser("plex", help="Plex connection settings")
     plex_sub = plex.add_subparsers(dest="plex_command", required=True)
@@ -135,6 +143,30 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_watch(args: argparse.Namespace) -> int:
+    """Run one on-demand release-watch cycle and print the report (counts only)."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    # No MusicBrainzError handling: watch_all_artists skips failed artists
+    # (counts them in the report) rather than raising — skip-don't-queue.
+    client = MusicBrainzClient()
+    try:
+        report = watch_all_artists(storage, client)
+    finally:
+        client.close()
+        storage.close()
+    print(
+        f"watch complete: polled={report.artists_polled} failed={report.artists_failed} "
+        f"baselined={report.artists_baselined} groups={report.groups_seen} "
+        f"new={report.events_new} upcoming={report.events_upcoming} "
+        f"date_changed={report.events_date_changed}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse CLI arguments and dispatch the requested subcommand."""
     args = _build_parser().parse_args(argv)
@@ -150,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "sync":
         return _cmd_sync(args)
+    if args.command == "watch":
+        return _cmd_watch(args)
     if args.command == "plex" and args.plex_command == "configure":
         return _cmd_plex_configure(args)
 
