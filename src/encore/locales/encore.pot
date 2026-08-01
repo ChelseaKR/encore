@@ -1,0 +1,61 @@
+#, python-format
+msgid "%(artist)s — %(title)s (%(type)s, %(date)s)"
+msgstr ""
+
+#, python-format
+msgid "%(count)d new release for your library"
+msgid_plural "%(count)d new releases for your library"
+msgstr[0] ""
+msgstr[1] ""
+
+#, python-format
+msgid "Cover art: %(url)s"
+msgstr ""
+
+msgid ""
+"If you are reading this, encore can reach this channel. Release alerts "
+"will arrive here."
+msgstr ""
+
+#, python-format
+msgid "New release: %(artist)s — %(title)s"
+msgstr ""
+
+#, python-format
+msgid "Open in Plex: %(url)s"
+msgstr ""
+
+#, python-format
+msgid "Release date changed: %(artist)s — %(title)s"
+msgstr ""
+
+#, python-format
+msgid "Release date: %(date)s"
+msgstr ""
+
+#, python-format
+msgid "Type: %(type)s"
+msgstr ""
+
+msgid "Unknown artist"
+msgstr ""
+
+msgid "Unknown type"
+msgstr ""
+
+#, python-format
+msgid "Upcoming release: %(artist)s — %(title)s"
+msgstr ""
+
+msgid "date not announced"
+msgstr ""
+
+msgid "encore test notification"
+msgstr ""
+
+#, python-format
+msgid "…and %(count)d more."
+msgid_plural "…and %(count)d more."
+msgstr[0] ""
+msgstr[1] ""
+

@@ -1,25 +1,33 @@
 """SQLModel table definitions — the schema's first cut (encore-plans/04).
 
 Scope so far: the ``settings`` singleton (F0), the ``artists`` inventory
-(F1), the ``artist_matches`` identity cache + review queue (F2), and the
-``release_groups`` + ``events`` watch tables (F3). Channels and
-recommendations land with the features that read and write them (F4-F7),
-each added by its own migration in `encore.storage`.
+(F1), the ``artist_matches`` identity cache + review queue (F2), the
+``release_groups`` + ``events`` watch tables (F3), and the ``channels`` +
+``deliveries`` notification tables (F4). Feeds and recommendations land with
+the features that read and write them (F5-F7), each added by its own
+migration in `encore.storage`.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 __all__ = [
+    "CHANNEL_MODES",
+    "DELIVERY_STATUSES",
     "MATCH_STATUSES",
     "RELEASE_EVENT_KINDS",
     "SETTINGS_ROW_ID",
     "AppSettings",
     "Artist",
     "ArtistMatch",
+    "Delivery",
+    "EventView",
+    "NotificationChannel",
     "ReleaseEvent",
     "ReleaseGroup",
 ]
@@ -40,6 +48,9 @@ class AppSettings(SQLModel, table=True):
     with the key file stored beside the database (docs/adr/0008).
     ``plex_library_keys`` is a JSON-encoded list of selected music-library
     keys (F1 multi-library pick); ``NULL`` means "all music libraries."
+    ``plex_machine_identifier`` is the server's own public identifier, learned
+    (read-only) during a sync and used to build the ``app.plex.tv`` deep links
+    F4 notifications carry — it is not a secret and not taste data.
     """
 
     __tablename__ = "settings"
@@ -48,6 +59,7 @@ class AppSettings(SQLModel, table=True):
     plex_base_url: str | None = Field(default=None)
     plex_token_cipher: bytes | None = Field(default=None)
     plex_library_keys: str | None = Field(default=None)
+    plex_machine_identifier: str | None = Field(default=None)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
@@ -141,9 +153,12 @@ RELEASE_EVENT_KINDS = ("new", "upcoming", "date_changed")
 class ReleaseEvent(SQLModel, table=True):
     """One release-watch observation for delivery (F3 writes, F4/F5 read).
 
-    ``notified_at`` stays ``NULL`` until F4 delivers the event — it is the
-    delivery queue's cursor, created here so the F3 diff and the F4 fan-out
-    share one table instead of a table and a shadow queue.
+    ``notified_at`` stays ``NULL`` until F4 has finished with the event: it is
+    stamped once every `Delivery` row fanned out from it has reached a
+    terminal state. An event with no deliveries at all (no channel configured,
+    or every channel created after the event) keeps ``NULL`` forever and is
+    read only by the in-app feed — nothing was sent, and saying otherwise
+    would be a lie in the one column an operator would check.
     """
 
     __tablename__ = "events"
@@ -153,3 +168,94 @@ class ReleaseEvent(SQLModel, table=True):
     kind: str = Field(index=True)
     created_at: datetime = Field(default_factory=utcnow)
     notified_at: datetime | None = Field(default=None)
+
+
+# Valid NotificationChannel.mode values. "instant" delivers each event as its
+# own notification on the next cycle; "digest" rolls pending events into one
+# message per ``digest_interval_hours`` (F4's two delivery cadences).
+CHANNEL_MODES = ("instant", "digest")
+
+
+class NotificationChannel(SQLModel, table=True):
+    """One Apprise destination (ntfy, Discord, email, generic webhook…) — F4.
+
+    ``url_cipher`` holds the Fernet ciphertext of the Apprise URL, never the
+    URL itself: an Apprise URL *is* a credential (``ntfy://user:pass@…``,
+    ``discord://webhook_id/webhook_token``), so it is encrypted at rest under
+    the same scheme as the Plex token (docs/adr/0008) and never logged or
+    printed. The ``last_*``/``consecutive_failures`` columns are the "surface
+    the failure instead of dying silently" half of F4's acceptance: a channel
+    that is failing says so, with its most recent error, in
+    ``encore channels list`` today and in the F6 UI when one exists.
+    """
+
+    __tablename__ = "channels"
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(unique=True, index=True)
+    url_cipher: bytes
+    mode: str = Field(default="instant", index=True)
+    enabled: bool = Field(default=True, index=True)
+    digest_interval_hours: float = Field(default=24.0)
+    last_digest_at: datetime | None = Field(default=None)
+    last_success_at: datetime | None = Field(default=None)
+    last_failure_at: datetime | None = Field(default=None)
+    last_error: str | None = Field(default=None)
+    consecutive_failures: int = Field(default=0)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# Valid Delivery.status values. "pending" is owed (possibly after a backoff
+# wait); "delivered" and "failed" are terminal — "failed" means the bounded
+# retries were exhausted, not that the next cycle will try again.
+DELIVERY_STATUSES = ("pending", "delivered", "failed")
+
+
+class Delivery(SQLModel, table=True):
+    """One (event, channel) delivery obligation with its retry state (F4).
+
+    The fan-out is materialized rather than computed: one row per event per
+    channel means a five-channel install can have a Discord delivery succeed
+    while an email one is still backing off, which a single ``notified_at``
+    flag on the event could never express. ``next_attempt_at`` is the backoff
+    clock — a pending row is only tried once the cycle's ``now`` reaches it.
+    """
+
+    __tablename__ = "deliveries"
+    __table_args__ = (UniqueConstraint("event_id", "channel_id", name="uq_delivery_event_channel"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    event_id: int = Field(foreign_key="events.id", index=True)
+    channel_id: int = Field(foreign_key="channels.id", index=True)
+    status: str = Field(default="pending", index=True)
+    attempts: int = Field(default=0)
+    next_attempt_at: datetime = Field(default_factory=utcnow, index=True)
+    last_error: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+@dataclass(frozen=True)
+class EventView:
+    """One event joined to everything a renderer or feed needs — not a table.
+
+    F4's notification text, the in-app feed, and (next) F5's RSS/iCal entries
+    all want the same shape: the event, its release-group, and the artist's
+    *display* name, which lives on `ArtistMatch` rather than on the group.
+    Assembling it once in `encore.storage` keeps the join out of three
+    consumers. Every field here is taste data — an `EventView` must never
+    reach a log line (docs/audits/dpia.md §4).
+    """
+
+    event_id: int
+    kind: str
+    created_at: datetime
+    release_group_mbid: str
+    title: str
+    primary_type: str | None
+    secondary_types: tuple[str, ...]
+    first_release_date: str
+    artist_mbid: str
+    artist_name: str
+    plex_rating_key: str | None

@@ -74,17 +74,22 @@ encore/
 │   │                          #   the htmx UI + JSON API as features land
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
 │   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
-│   ├── models.py              # SQLModel tables — settings, artists inventory, artist matches
+│   ├── models.py              # SQLModel tables — settings, artists, matches, releases,
+│   │                          #   events, notification channels, delivery queue
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
 │   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
-│   ├── scheduler.py           # background schedulers: Plex sync + MB release watch
+│   ├── i18n.py                # the gettext seam every user-facing string routes through
+│   ├── scheduler.py           # background schedulers: Plex sync, MB release watch,
+│   │                          #   notification delivery
 │   ├── matching/              # MusicBrainz matching + review queue (F2)
 │   │                          #   client/scorer/engine + artist_matches cache
 │   ├── watch/                 # F3 release watching: poll release-groups, diff,
 │   │                          #   baseline-seed, emit new/upcoming/date_changed events
-│   ├── notify/                  # Apprise fan-out, RSS/iCal feeds (F4, F5)           [M2]
-│   └── recommend/              # ListenBrainz labs similar-artists (F7, F8)          [M3]
+│   ├── notify/                # F4 notifications: render events, Apprise fan-out,
+│   │                          #   retry/backoff, instant + digest cadences
+│   │                          #   (RSS/iCal feeds are F5, still to come)             [M2]
+│   └── recommend/             # ListenBrainz labs similar-artists (F7, F8)           [M3]
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
 ├── slos/                       # SLO declarations (Tier A — this is a running service)
 ├── tests/
@@ -129,7 +134,7 @@ never committed. Per-repo *values* live in [`docs/ROADMAP.md`](docs/ROADMAP.md) 
 | Release & Versioning | ✅ | SemVer; signed tags (from M4, first release); Keep-a-Changelog; GHCR by digest, never `:latest` |
 | Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A today**: F0 has no UI surface; goes merge-blocking at M2 (first real UI) |
 | Observability | ✅ | Tier A (running service) — `/livez`+`/readyz` today; structured JSON logs + PII/secret redaction **land at M1–M2** with the routes/pollers they measure (`docs/ROADMAP.md` §11) |
-| Internationalization | **N/A — no user-facing strings at M0** | Gettext seam activates at M2 when the first user-facing string ships — see [`docs/I18N.md`](docs/I18N.md) |
+| Internationalization | **Seam live, English-only** | The gettext seam (`src/encore/i18n.py`) went live with F4's notification strings — the project's first user-facing text — with the extraction template gated in `make verify`. No second catalog ships yet; see [`docs/I18N.md`](docs/I18N.md) |
 | AI Evaluation | **N/A — no LLM/model** | Flips to Applies if F14 ("vibe" recs) ever lands; accepted decision in ADR-0009 |
 | Quality & Metrics | ✅ | Metrics ledger in `docs/ROADMAP.md`; `make verify` reproduces the CI gate set |
 | Documentation | ✅ | This README + ADRs + ROADMAP + RESPONSIBLE-TECH-AUDITS + CHANGELOG, kept current |

@@ -8,6 +8,59 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **F4 notifications — Apprise fan-out (M2, 2026-08-01).** `src/encore/notify/`
+  turns the events F3 records into messages a human receives. Channels are
+  Apprise destinations (ntfy, Discord, email, Telegram, Pushover, and the
+  generic webhook that stays the published answer to "wire it to my
+  downloader"), stored in a new `channels` table with the **URL Fernet-encrypted
+  at rest** — an Apprise URL is a credential, and a raw-bytes test proves the
+  plaintext never reaches the database file. Fan-out is a materialized
+  `deliveries` queue, one row per (event, channel), so a Discord success and an
+  email backoff are independent facts rather than one flag on the event
+  (docs/adr/0012, migration v5). Failures **retry with bounded exponential
+  backoff** (5/10/20/40 minutes, then terminal) and land on the channel row, so
+  `encore channels list` shows a dying webhook instead of silence. Two cadences:
+  instant (one notification per event) and digest (a rollup per
+  `digest_interval_hours`, capped in length, where a digest of one renders as a
+  plain notification). Notifications carry every field the plan asks for —
+  artist, title, primary+secondary type, MusicBrainz's partial date verbatim,
+  a Cover Art Archive link, and an `app.plex.tv` deep link built from the machine
+  identifier the sync now learns read-only. Adding a channel **never replays
+  history**: only events newer than the channel fan out to it, the
+  don't-flood-on-first-contact rule ADR-0011 applies to artists, applied to
+  destinations. A third scheduler (`notify-deliver`,
+  `$ENCORE_NOTIFY_INTERVAL_MINUTES`, default 15 minutes, coalescing) runs the
+  cycle and joins the `/readyz` scheduler checks; `encore notify` runs it on
+  demand; `encore channels add|list|remove|enable|disable|test` manages
+  destinations, reading the URL from a hidden prompt or stdin and never printing
+  it back.
+- **The in-app feed, as `encore events` (F4).** The always-works fallback for
+  when every channel is broken. It is deliberately a **CLI surface, not an HTTP
+  route**: the feed is pure taste data, encore has no authentication until F6
+  sets the admin password, and an unauthenticated `/events` on a published
+  container port is exactly the household-observer harm the no-outing lens
+  exists to prevent (docs/adr/0012, residual-risk RR-04).
+- **The i18n seam is live (I18N-02, 2026-08-01).** F4's notification text is the
+  project's first user-facing string, so `src/encore/i18n.py` ships with it
+  rather than after it: `_()`/`_n()` with named `%(placeholder)s` substitutions,
+  catalogs under `src/encore/locales/`, and a committed extraction template
+  gated by `make i18n-check` in `make verify` and CI (I18N gate G2-lite). A
+  pseudolocale test compiles a catalog at runtime and asserts the renderer picks
+  it up — without it, "the seam exists" would be unfalsifiable. Still
+  English-only; G7/G6/G5/G3 stay deferred with reasons in `docs/I18N.md`.
+
+  Scope honesty: **no message has been delivered to a real service.** Every path
+  is proven offline against a `NotificationSender` seam plus the real Apprise URL
+  parser, but "Discord accepted this" needs a Discord webhook and is recorded as
+  an open manual gate in `docs/ROADMAP.md` §7, to be closed during the M2 exit
+  soak. Cover-art URLs are constructed, never verified — checking would cost a
+  request per event, and the link 404s when the archive has no art. Rendering is
+  transport-neutral text: no Discord embeds, ntfy priority headers, or HTML
+  email. Notification *filtering* (albums-only defaults, per-artist mutes) is
+  F10 at M3, so a digest's only volume control today is its length cap. The
+  `deliveries` queue is never pruned; retention lands with F15 at M4. RSS and
+  iCal feeds (F5) and the onboarding wizard (F6) are still ahead in M2.
+
 - **F3 release watching (M2, 2026-07-31).** `src/encore/watch/`: the MusicBrainz
   release-group poller and diff engine (docs/adr/0001 + new docs/adr/0011).
   The WS/2 client gains a paginated `browse_release_groups` that draws from the

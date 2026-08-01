@@ -1,4 +1,4 @@
-"""CLI tests: `encore serve` argument parsing and the --data-dir wiring (F0)."""
+"""CLI tests: argument parsing, --data-dir wiring, and the F4 channel/feed surface."""
 
 from __future__ import annotations
 
@@ -9,8 +9,17 @@ from typing import Any
 import pytest
 
 from encore import cli
+from encore.notify import DeliveryError, run_delivery_cycle
 from encore.plex import PlexMusicClient
 from encore.storage import DATA_DIR_ENV, Storage
+from tests.notify_fixtures import (
+    ARTIST_NAME,
+    CHANNEL_URL,
+    MACHINE_ID,
+    RELEASE_TITLE,
+    RecordingSender,
+    seed_event,
+)
 from tests.plex_fixtures import FakeArtist, FakeLibrary, make_client_session
 
 
@@ -204,3 +213,121 @@ def test_watch_reports_an_unusable_data_directory(
 
     assert cli.main(["watch", "--data-dir", str(not_a_directory)]) == 1
     assert "cannot create data directory" in capsys.readouterr().err
+
+
+def test_channels_add_list_and_remove_never_print_the_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_channel_url", lambda: CHANNEL_URL)
+
+    assert cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"]) == 0
+    assert cli.main(["channels", "list", "--data-dir", str(tmp_path)]) == 0
+    assert cli.main(["channels", "disable", "--data-dir", str(tmp_path), "--name", "phone"]) == 0
+    assert cli.main(["channels", "enable", "--data-dir", str(tmp_path), "--name", "phone"]) == 0
+    assert cli.main(["channels", "remove", "--data-dir", str(tmp_path), "--name", "phone"]) == 0
+
+    captured = capsys.readouterr()
+    assert CHANNEL_URL not in captured.out + captured.err
+    assert "APPRISE-URL-needle" not in captured.out + captured.err
+    assert "phone" in captured.out
+
+
+def test_channels_add_rejects_an_empty_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_read_channel_url", lambda: "")
+    assert cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"]) == 2
+
+
+def test_channels_add_reports_a_duplicate_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_channel_url", lambda: CHANNEL_URL)
+    cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"])
+    assert cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"]) == 1
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_channels_list_and_events_are_helpful_when_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["channels", "list", "--data-dir", str(tmp_path)]) == 0
+    assert cli.main(["events", "--data-dir", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "No notification channels configured" in output
+    assert "No release events yet" in output
+
+
+def test_channels_test_surfaces_the_failure_and_the_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_channel_url", lambda: CHANNEL_URL)
+    cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"])
+
+    monkeypatch.setattr(cli, "send_test_notification", lambda *_a, **_k: None)
+    assert cli.main(["channels", "test", "--data-dir", str(tmp_path), "--name", "phone"]) == 0
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise DeliveryError("the notification service rejected or dropped the message")
+
+    monkeypatch.setattr(cli, "send_test_notification", _boom)
+    assert cli.main(["channels", "test", "--data-dir", str(tmp_path), "--name", "phone"]) == 1
+    assert "rejected or dropped" in capsys.readouterr().err
+
+
+def test_notify_runs_a_cycle_and_events_shows_the_in_app_feed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_channel_url", lambda: CHANNEL_URL)
+    cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"])
+
+    storage = Storage(tmp_path)
+    storage.set_plex_machine_identifier(MACHINE_ID)
+    seed_event(storage)
+    storage.close()
+
+    sender = RecordingSender()
+    monkeypatch.setattr(
+        cli, "run_delivery_cycle", lambda storage_arg: run_delivery_cycle(storage_arg, sender)
+    )
+    assert cli.main(["notify", "--data-dir", str(tmp_path)]) == 0
+    assert "delivery complete:" in capsys.readouterr().out
+    assert len(sender.calls) == 1
+
+    # The in-app feed is the always-works fallback: it shows the event whether
+    # or not any channel worked, and it renders the same fields.
+    assert cli.main(["events", "--data-dir", str(tmp_path), "--limit", "5"]) == 0
+    feed = capsys.readouterr().out
+    assert ARTIST_NAME in feed
+    assert RELEASE_TITLE in feed
+    assert MACHINE_ID in feed  # the Plex deep link
+
+
+def test_notify_flags_unhealthy_channels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_read_channel_url", lambda: CHANNEL_URL)
+    cli.main(["channels", "add", "--data-dir", str(tmp_path), "--name", "phone"])
+    storage = Storage(tmp_path)
+    seed_event(storage)
+    storage.close()
+
+    sender = RecordingSender(raise_unexpected=True)
+    monkeypatch.setattr(
+        cli, "run_delivery_cycle", lambda storage_arg: run_delivery_cycle(storage_arg, sender)
+    )
+    assert cli.main(["notify", "--data-dir", str(tmp_path)]) == 0
+    assert "channels are unhealthy" in capsys.readouterr().out
+
+
+def test_data_dir_errors_are_reported_not_raised(tmp_path: Path) -> None:
+    # A file where the data directory should be: every F4 command must say so
+    # rather than surface a traceback.
+    blocked = tmp_path / "not-a-dir"
+    blocked.write_text("")
+    for argv in (
+        ["notify", "--data-dir", str(blocked)],
+        ["events", "--data-dir", str(blocked)],
+        ["channels", "list", "--data-dir", str(blocked)],
+        ["channels", "remove", "--data-dir", str(blocked), "--name", "x"],
+        ["channels", "test", "--data-dir", str(blocked), "--name", "x"],
+    ):
+        assert cli.main(argv) == 1

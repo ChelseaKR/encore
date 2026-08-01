@@ -30,12 +30,18 @@ def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyP
     # watch scheduler running (keyless, starts by default).
     monkeypatch.delenv("ENCORE_SYNC_INTERVAL_HOURS", raising=False)
     monkeypatch.delenv("ENCORE_WATCH_INTERVAL_HOURS", raising=False)
+    monkeypatch.delenv("ENCORE_NOTIFY_INTERVAL_MINUTES", raising=False)
     with TestClient(create_app(tmp_path)) as client:
         response = client.get("/readyz")
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
-        "checks": {"db": "ok", "sync_scheduler": "idle", "watch_scheduler": "ok"},
+        "checks": {
+            "db": "ok",
+            "sync_scheduler": "idle",
+            "watch_scheduler": "ok",
+            "notify_scheduler": "ok",
+        },
     }
 
 

@@ -127,6 +127,12 @@ def sync_artists(
         SyncError: the library selection is invalid.
     """
     keys = _resolve_library_keys(storage, client, library_keys)
+    # Learned here rather than at `plex configure` time: it comes free with the
+    # connection the sync already makes, and F4's Plex deep links need it
+    # (a notification is useless if "open in Plex" goes nowhere).
+    machine_identifier = client.machine_identifier
+    if machine_identifier is not None:
+        storage.set_plex_machine_identifier(machine_identifier)
     inventory: list[PlexArtist] = []
     skipped = 0
     for key in keys:
