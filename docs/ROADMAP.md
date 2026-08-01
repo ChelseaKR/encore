@@ -52,7 +52,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 
 | Metric | Gate | Target | Stage | Current status |
 |---|---|---|---|---|
-| Branch coverage | AUTO (CQ-08) | ≥85% | 4 | Met (93.91% over 54 tests, including F0 storage/secrets and F1 sync) |
+| Branch coverage | AUTO (CQ-08) | ≥85% | 4 | Met (95.85% over 172 tests, covering F0-F4) |
 | mypy --strict errors | AUTO (CQ-06) | 0 | 3 | Met |
 | ruff (format+lint) | AUTO (CQ-04) | 0 findings | 1–2 | Met |
 | Semgrep HIGH/CRIT | AUTO (SEC-07) | 0 | 5 | Met — pinned Semgrep scans `p/default`, `p/python`, and Encore's no-sensitive-values-in-logs rule in `make security`; the committed waiver ledger is empty |
@@ -63,13 +63,15 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Lighthouse a11y | AUTO (A11Y-02) | ≥0.95 | 6 | **N/A today** — F0 has no UI surface; applies from M2 (first real UI) |
 | axe critical/serious/moderate | AUTO (A11Y-01) | 0 | 6 | **N/A today**, same reason |
 | Perf stage | N/A — no measurable hot path exists yet; revisit when a UI/poller creates one | — | 7 | N/A-with-reason (CICD-29) |
-| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1 + F2 + F3 surfaces (2026-07-31): sync/scheduler logging is sentinel-tested, the matching layer's `no_outing`/`no_secrets_in_logs` marker tests prove artist names/MBIDs/token never reach logs or outbound MB requests, and the F3 watch layer's marker tests extend the same guarantee to release MBIDs/titles at every log level (blocking via `make responsible` in `make verify` + CI stage 8); the full tripwire battery through feeds/notifications grows with the F4/F5 egress surfaces (M2) |
+| Sentinel/no-outing guard | AUTO (RTF-02, project) | pass | 8 | Active for the F1-F4 surfaces (2026-08-01): sync/scheduler logging is sentinel-tested; the matching and watch layers prove artist names/MBIDs/titles/token never reach logs or outbound MB requests; and F4's marker tests extend the guarantee to the **egress** surface — a notification body and an Apprise channel URL never reach a log line at any level, a plugin exception is reduced to its type before it can echo a URL, and the plaintext channel URL never reaches the database file (raw-bytes test). Blocking via `make responsible` in `make verify` + CI stage 8. The remaining growth is F5's feed tokens |
 | Read-only-Plex guard | AUTO (project) | pass | 8 | Met (F1, 2026-07-17) — transport-level `ReadOnlySession` rejects non-GET/HEAD/OPTIONS before network I/O, plus a facade no-mutating-verbs assertion (`tests/test_plex_client.py`, `read_only_plex` marker); blocking via `make responsible` |
 | Trivy CRITICAL,HIGH | AUTO (SEC-28) | 0 | 9 | Met — scans the built image on every push (`ci.yml`) and again at tag (`release.yml`), not deferred to first release |
 | Container bring-up (`/livez` probe) | AUTO (QM-08, OBS-19) | 200 OK | 9 | Met (wired 2026-07-05) |
 | Workflow SAST (zizmor) | AUTO (CICD-19) | 0 findings | 5 | Met (wired 2026-07-05, `ci.yml`) |
 | CodeQL `actions` pack | AUTO (CICD-20) | 0 alerts | 5 | Wired 2026-07-05 (`codeql.yml`); automatic triggers restored 2026-07-14; same account-budget caveat as the CodeQL row above |
-| SLO schema (`slos/*.yaml`) | AUTO (OBS-14) | conforms | 4 | Met — `make slo-check` (`scripts/validate_slos.py`, wired 2026-07-09); the F3 poller now exists (2026-07-31) but the poll-freshness SLI query stays a documented placeholder until a metrics surface ships (RED metrics land with the M2 routes) |
+| SLO schema (`slos/*.yaml`) | AUTO (OBS-14) | conforms | 4 | Met — `make slo-check` (`scripts/validate_slos.py`, wired 2026-07-09); the F3 poller and F4 delivery cycle now exist, but both SLI queries stay documented placeholders until a metrics surface ships (RED metrics land with the M2 routes) |
+| I18N extraction template current | AUTO (I18N G2-lite) | matches source | 4 | **Met (new 2026-08-01)** — `make i18n-check` in `make verify` + CI; the seam went live with F4's notification strings, the project's first user-facing text. G7/G6/G5/G3 stay deferred with reasons in `docs/I18N.md` (no second catalog exists to compile or compare) |
+| Notification delivery (real service) | MANUAL (project) | test-fire arrives | 9 | **Not met — needs a live service.** Every F4 path is proven offline against a `NotificationSender` seam plus the real Apprise URL parser, but "Discord accepted this message" cannot be asserted without a Discord webhook. Verify with `encore channels test` against a real ntfy/Discord/SMTP target as part of the M2 exit soak |
 | CITATION.cff validity | AUTO (DOC-08) | valid | 4 | Met — `make citation-check` (pinned cffconvert via uvx, wired 2026-07-09) |
 | Wheel/sdist build | AUTO (CQ-10) | builds | 9 | Met — `make wheel` (`uv build`) in `make verify` + CI (wired 2026-07-09); container is no longer the only artifact |
 | CHANGELOG section at tag | AUTO (REL-10) | present | 9 | Met — grep gate in `release.yml` `verify-at-tag` (wired 2026-07-09); fires at first tag |
@@ -97,7 +99,12 @@ Milestones M0–M4 with exit criteria are specified in full in
   with F1/F2 — `make responsible`, CI stage 8).
 - **M2 — Watch & alert** (F3–F6, the MVP line; F3 release watching complete
   2026-07-31 — poller, diff engine, baseline seeding per `docs/adr/0011`,
-  events table, second scheduler, `encore watch`). *Exit:* fresh install → test
+  events table, second scheduler, `encore watch`. F4 notifications complete
+  2026-08-01 — Apprise fan-out, materialized delivery queue with bounded
+  exponential backoff, instant + digest cadences, `encore channels`/`notify`,
+  the CLI in-app feed, and the i18n seam per `docs/adr/0012`). *Remaining:* F5
+  feeds (RSS + iCal), F6 onboarding wizard — which also brings the admin
+  password the HTTP event feed is waiting on. *Exit:* fresh install → test
   notification in <10 min; 24h soak with zero duplicate alerts and zero rate-limit
   violations; a11y gates go merge-blocking with the first real UI.
 - **M3 — Discover** (F7–F10). *Exit:* rec page <2s from cache; noise budget honored;
@@ -130,8 +137,10 @@ statute.
 **Observability tier: A** (this is a running, self-hosted service, not a CLI/library
 — `../encore-plans/04-architecture.md` §deployment & operations). `/livez` and
 `/readyz` exist today (`src/encore/app.py`); `readyz` performs a real database
-probe since F0 (M1, 2026-07-11) and gains the scheduler-heartbeat check at M2
-with the first poller. Structured JSON logs with secret/PII redaction, RED metrics
+probe since F0 (M1, 2026-07-11) and carries the scheduler-heartbeat check for
+all three schedulers since F3/F4 (sync, watch, notify — a started-then-dead
+scheduler is unready; a disabled or credential-gated one is idle, not a
+failure). Structured JSON logs with secret/PII redaction, RED metrics
 per route, and `slos/encore.yaml` (poll-freshness SLO) are specified now and
 instantiated as the routes and pollers they measure land (M1–M2) — see
 `slos/encore.yaml` for the declared target, schema-validated on every `make verify`

@@ -3,7 +3,7 @@
 # locally means green in CI (CICD-27).
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check wheel serve verify clean
+.PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check i18n-check i18n-extract wheel serve verify clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -47,6 +47,14 @@ slo-check: ## Validate slos/*.yaml against the Observability Standard §4 schema
 citation-check: ## Validate CITATION.cff (DOC-08) — pinned cffconvert via uvx
 	uvx cffconvert==2.0.0 --validate -i CITATION.cff
 
+i18n-check: ## I18N G2-lite (docs/I18N.md): the committed messages.pot is current
+	@./scripts/i18n-check.sh
+
+i18n-extract: ## Regenerate src/encore/locales/encore.pot from the source strings
+	uv run pybabel extract --mapping-file babel.cfg --keyword _ --keyword _n:1,2 \
+		--omit-header --sort-output --no-location \
+		--output-file src/encore/locales/encore.pot src
+
 wheel: ## Build sdist + wheel (CQ-10) — proves the package builds, container isn't the only artifact
 	uv build
 
@@ -59,7 +67,7 @@ serve: ## Run the dev server
 # The full gate. Determinism + reproducibility: same inputs, same result, every run.
 # CI runs this exact target (ci.yml/release.yml) — there is no second, drifted
 # implementation of "the merge gate" anywhere (CICD-27).
-verify: lint type cov security responsible todo-gate slo-check citation-check wheel ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation schema checks + wheel build)
+verify: lint type cov security responsible todo-gate slo-check citation-check i18n-check wheel ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation/i18n schema checks + wheel build)
 	@echo "verify: all gates green"
 
 clean: ## Remove caches and build artifacts

@@ -2,10 +2,11 @@
 
 Design (docs/adr/0005 + docs/adr/0008): a single SQLite database in a mounted
 volume is the only datastore; a Fernet key file sits beside it and encrypts
-the secret-bearing columns (Plex token today; Apprise URLs and feed tokens
-when F4/F5 land). Schema changes run as ordered forward migrations tracked in
-SQLite's ``PRAGMA user_version`` — there is no down-migration story, matching
-the single-operator deployment model (backup = copy the directory).
+the secret-bearing columns (the Plex token since F0, Apprise channel URLs
+since F4; feed tokens join them when F5 lands). Schema changes run as ordered
+forward migrations tracked in SQLite's ``PRAGMA user_version`` — there is no
+down-migration story, matching the single-operator deployment model
+(backup = copy the directory).
 """
 
 from __future__ import annotations
@@ -13,20 +14,26 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, event
-from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlmodel import Session, SQLModel, col, create_engine, select
 
 from encore.models import (
+    CHANNEL_MODES,
+    DELIVERY_STATUSES,
     MATCH_STATUSES,
     RELEASE_EVENT_KINDS,
     SETTINGS_ROW_ID,
     AppSettings,
     Artist,
     ArtistMatch,
+    Delivery,
+    EventView,
+    NotificationChannel,
     ReleaseEvent,
     ReleaseGroup,
     utcnow,
@@ -97,6 +104,21 @@ def _migration_0004_release_watching(connection: Connection) -> None:
     SQLModel.metadata.create_all(connection)
 
 
+def _migration_0005_notifications(connection: Connection) -> None:
+    """v5 (F4): create ``channels`` + ``deliveries``; add the Plex machine id.
+
+    Both steps are guarded, so this is correct for a fresh database (v1
+    already created everything from current metadata) and for a real v4
+    database written by the F3 build (which has neither).
+    """
+    SQLModel.metadata.create_all(connection)
+    settings_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(settings)")}
+    if "plex_machine_identifier" not in settings_columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE settings ADD COLUMN plex_machine_identifier VARCHAR"
+        )
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -104,6 +126,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0002_artists_and_library_selection,
     _migration_0003_artist_matches,
     _migration_0004_release_watching,
+    _migration_0005_notifications,
 )
 
 
@@ -460,3 +483,329 @@ class Storage:
             if kind is not None:
                 statement = statement.where(ReleaseEvent.kind == kind)
             return list(session.exec(statement).all())
+
+    def set_plex_machine_identifier(self, machine_identifier: str) -> None:
+        """Record the Plex server's machine identifier (for F4 deep links)."""
+        with self.session() as session:
+            settings = self.get_settings(session)
+            settings.plex_machine_identifier = machine_identifier
+            settings.updated_at = utcnow()
+            session.add(settings)
+            session.commit()
+
+    def get_plex_machine_identifier(self) -> str | None:
+        """Return the stored Plex machine identifier (``None`` before the first sync)."""
+        with self.session() as session:
+            return self.get_settings(session).plex_machine_identifier
+
+    # -- notification channels (F4) -------------------------------------------
+
+    def add_channel(
+        self,
+        name: str,
+        url: str,
+        mode: str = "instant",
+        digest_interval_hours: float = 24.0,
+    ) -> NotificationChannel:
+        """Create a channel; the Apprise URL is encrypted at rest (docs/adr/0008).
+
+        Raises:
+            StorageError: ``mode`` is not one of `encore.models.CHANNEL_MODES`,
+                ``digest_interval_hours`` is not positive, or ``name`` is taken.
+        """
+        if mode not in CHANNEL_MODES:
+            raise StorageError(f"invalid channel mode {mode!r}; expected {CHANNEL_MODES}")
+        if digest_interval_hours <= 0:
+            raise StorageError("digest interval must be a positive number of hours")
+        row = NotificationChannel(
+            name=name,
+            url_cipher=self.cipher.encrypt(url),
+            mode=mode,
+            digest_interval_hours=digest_interval_hours,
+        )
+        with self.session() as session:
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
+                raise StorageError(f"a notification channel named {name!r} already exists") from exc
+            session.refresh(row)
+        return row
+
+    def list_channels(self, enabled_only: bool = False) -> list[NotificationChannel]:
+        """Return channels in creation order; optionally only the enabled ones."""
+        with self.session() as session:
+            statement = select(NotificationChannel).order_by(col(NotificationChannel.created_at))
+            if enabled_only:
+                statement = statement.where(NotificationChannel.enabled)
+            return list(session.exec(statement).all())
+
+    def get_channel(self, name: str) -> NotificationChannel | None:
+        """Return one channel by name, or ``None``."""
+        with self.session() as session:
+            statement = select(NotificationChannel).where(NotificationChannel.name == name)
+            return session.exec(statement).first()
+
+    def channel_url(self, channel: NotificationChannel) -> str:
+        """Decrypt a channel's Apprise URL — the only place it exists in plaintext.
+
+        Callers must treat the result as a credential: never log it, never
+        print it, never include it in an error message.
+
+        Raises:
+            SecretDecryptionError: the key file does not match the ciphertext.
+        """
+        return self.cipher.decrypt(channel.url_cipher)
+
+    def set_channel_enabled(self, name: str, enabled: bool) -> NotificationChannel:
+        """Enable or disable a channel without deleting its history.
+
+        Raises:
+            StorageError: no channel with that name exists.
+        """
+        with self.session() as session:
+            row = self._require_channel(session, name)
+            row.enabled = enabled
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def remove_channel(self, name: str) -> None:
+        """Delete a channel and the delivery rows that fanned out to it.
+
+        Raises:
+            StorageError: no channel with that name exists.
+        """
+        with self.session() as session:
+            row = self._require_channel(session, name)
+            for delivery in session.exec(
+                select(Delivery).where(Delivery.channel_id == row.id)
+            ).all():
+                session.delete(delivery)
+            session.delete(row)
+            session.commit()
+
+    @staticmethod
+    def _require_channel(session: Session, name: str) -> NotificationChannel:
+        """Fetch a channel by name inside an open session, or raise."""
+        statement = select(NotificationChannel).where(NotificationChannel.name == name)
+        row = session.exec(statement).first()
+        if row is None:
+            raise StorageError(f"no notification channel named {name!r}")
+        return row
+
+    def record_channel_result(
+        self,
+        channel_id: int,
+        success: bool,
+        error: str | None = None,
+        digest_sent_at: datetime | None = None,
+    ) -> None:
+        """Update a channel's health after an attempt (F4's "surface it" half)."""
+        now = utcnow()
+        with self.session() as session:
+            row = session.get(NotificationChannel, channel_id)
+            if row is None:  # pragma: no cover - the channel was removed mid-cycle
+                return
+            if success:
+                row.last_success_at = now
+                row.consecutive_failures = 0
+                row.last_error = None
+            else:
+                row.last_failure_at = now
+                row.consecutive_failures += 1
+                row.last_error = error
+            if digest_sent_at is not None:
+                row.last_digest_at = digest_sent_at
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+
+    # -- delivery queue (F4) ---------------------------------------------------
+
+    def ensure_deliveries(self, now: datetime | None = None) -> int:
+        """Materialize missing (event, channel) delivery rows; return how many.
+
+        Only events created *after* a channel was added fan out to it. Adding
+        a channel therefore never replays history — the same
+        don't-flood-on-first-contact rule the F3 baseline applies to a newly
+        watched artist (docs/adr/0011), applied to a newly added channel.
+
+        ``now`` stamps ``next_attempt_at`` so a row created during a cycle is
+        due *in* that cycle; without it a brand-new delivery would be a few
+        microseconds in the future and wait a whole interval for nothing.
+        """
+        if now is None:
+            now = utcnow()
+        created = 0
+        with self.session() as session:
+            channels = session.exec(
+                select(NotificationChannel).where(NotificationChannel.enabled)
+            ).all()
+            if not channels:
+                return 0
+            events = session.exec(
+                select(ReleaseEvent).where(col(ReleaseEvent.notified_at).is_(None))
+            ).all()
+            if not events:
+                return 0
+            event_ids = [event.id for event in events if event.id is not None]
+            existing = {
+                (delivery.event_id, delivery.channel_id)
+                for delivery in session.exec(
+                    select(Delivery).where(col(Delivery.event_id).in_(event_ids))
+                ).all()
+            }
+            for event in events:
+                if event.id is None:  # pragma: no cover - persisted rows always have one
+                    continue
+                for channel in channels:
+                    if channel.id is None:  # pragma: no cover - same
+                        continue
+                    if event.created_at < channel.created_at:
+                        continue
+                    if (event.id, channel.id) in existing:
+                        continue
+                    session.add(
+                        Delivery(event_id=event.id, channel_id=channel.id, next_attempt_at=now)
+                    )
+                    created += 1
+            session.commit()
+        return created
+
+    def due_deliveries(self, channel_id: int, now: datetime) -> list[Delivery]:
+        """Return pending deliveries for one channel whose backoff has elapsed."""
+        with self.session() as session:
+            statement = (
+                select(Delivery)
+                .where(
+                    Delivery.channel_id == channel_id,
+                    Delivery.status == "pending",
+                    col(Delivery.next_attempt_at) <= now,
+                )
+                .order_by(col(Delivery.created_at))
+            )
+            return list(session.exec(statement).all())
+
+    def update_delivery(
+        self,
+        delivery_id: int,
+        status: str,
+        attempts: int,
+        next_attempt_at: datetime | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        """Write one delivery's outcome back (status, attempt count, backoff).
+
+        Raises:
+            StorageError: ``status`` is not one of
+                `encore.models.DELIVERY_STATUSES`.
+        """
+        if status not in DELIVERY_STATUSES:
+            raise StorageError(f"invalid delivery status {status!r}; expected {DELIVERY_STATUSES}")
+        with self.session() as session:
+            row = session.get(Delivery, delivery_id)
+            if row is None:  # pragma: no cover - the delivery was removed mid-cycle
+                return
+            row.status = status
+            row.attempts = attempts
+            row.last_error = last_error
+            if next_attempt_at is not None:
+                row.next_attempt_at = next_attempt_at
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+
+    def settle_events(self, event_ids: Sequence[int]) -> int:
+        """Stamp ``notified_at`` on events with no pending deliveries left.
+
+        "Settled" means encore is done trying, not that every channel
+        succeeded — a channel that exhausted its retries is terminal too, and
+        its failure is recorded on the channel row, not hidden in the event.
+        """
+        settled = 0
+        now = utcnow()
+        with self.session() as session:
+            for event_id in dict.fromkeys(event_ids):
+                deliveries = session.exec(
+                    select(Delivery).where(Delivery.event_id == event_id)
+                ).all()
+                if not deliveries or any(row.status == "pending" for row in deliveries):
+                    continue
+                event = session.get(ReleaseEvent, event_id)
+                if event is None or event.notified_at is not None:
+                    continue
+                event.notified_at = now
+                session.add(event)
+                settled += 1
+            session.commit()
+        return settled
+
+    # -- the read model shared by notifications, the in-app feed, and F5 -------
+
+    def list_event_views(self, limit: int = 50) -> list[EventView]:
+        """Return the newest events joined to release-group and artist display data."""
+        with self.session() as session:
+            events = session.exec(
+                select(ReleaseEvent).order_by(col(ReleaseEvent.created_at).desc()).limit(limit)
+            ).all()
+            return self._build_event_views(session, list(events))
+
+    def event_views_for(self, event_ids: Sequence[int]) -> dict[int, EventView]:
+        """Return read models for specific event ids, keyed by id."""
+        ids = list(dict.fromkeys(event_ids))
+        if not ids:
+            return {}
+        with self.session() as session:
+            events = session.exec(select(ReleaseEvent).where(col(ReleaseEvent.id).in_(ids))).all()
+            views = self._build_event_views(session, list(events))
+        return {view.event_id: view for view in views}
+
+    @staticmethod
+    def _build_event_views(session: Session, events: Sequence[ReleaseEvent]) -> list[EventView]:
+        """Assemble `EventView` rows with three bounded lookups, no ORM joins."""
+        if not events:
+            return []
+        group_ids = {event.release_group_id for event in events}
+        groups = {
+            group.id: group
+            for group in session.exec(
+                select(ReleaseGroup).where(col(ReleaseGroup.id).in_(group_ids))
+            ).all()
+        }
+        artist_mbids = {group.artist_mbid for group in groups.values()}
+        matches = {
+            match.mbid: match
+            for match in session.exec(
+                select(ArtistMatch).where(col(ArtistMatch.mbid).in_(artist_mbids))
+            ).all()
+            if match.mbid is not None
+        }
+        views: list[EventView] = []
+        for row in events:
+            group = groups.get(row.release_group_id)
+            if group is None or row.id is None:  # pragma: no cover - FK guarantees the group
+                continue
+            match = matches.get(group.artist_mbid)
+            secondary = (
+                tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
+            )
+            views.append(
+                EventView(
+                    event_id=row.id,
+                    kind=row.kind,
+                    created_at=row.created_at,
+                    release_group_mbid=group.mbid,
+                    title=group.title,
+                    primary_type=group.primary_type,
+                    secondary_types=secondary,
+                    first_release_date=group.first_release_date,
+                    artist_mbid=group.artist_mbid,
+                    artist_name=match.artist_name if match is not None else "",
+                    plex_rating_key=match.artist_key if match is not None else None,
+                )
+            )
+        return views

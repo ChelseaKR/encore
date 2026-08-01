@@ -104,7 +104,7 @@ def test_v1_database_upgrades_to_current_preserving_data(tmp_path: Path) -> None
     upgraded = Storage(tmp_path)
     with upgraded.engine.connect() as connection:
         version = connection.exec_driver_sql("PRAGMA user_version").scalar_one()
-        assert version == len(MIGRATIONS) == 4
+        assert version == len(MIGRATIONS) == 5
         tables = {
             row[0]
             for row in connection.exec_driver_sql(

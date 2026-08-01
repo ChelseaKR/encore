@@ -1,7 +1,12 @@
 """The FastAPI app factory.
 
-Scope so far (F0 + F1 + F3): health endpoints, the storage layer, and the two
-background schedulers (Plex sync, MusicBrainz release watch). `/livez` and
+Scope so far (F0 + F1 + F3 + F4): health endpoints, the storage layer, and the
+three background schedulers (Plex sync, MusicBrainz release watch,
+notification delivery). There is still **no HTTP read surface for library
+content** — the in-app event feed is deliberately CLI-only until F6 brings the
+admin password with it, because an unauthenticated `/events` route on a
+published container port would hand a household observer the exact taste feed
+the no-outing lens exists to protect (docs/adr/0012). `/livez` and
 `/readyz` are kept distinct per OBS-18/19/20 — `readyz` performs a real
 database check plus a scheduler check (a started scheduler that has died
 makes the instance unready; a deliberately disabled or credential-gated one
@@ -19,11 +24,15 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from encore import __version__
-from encore.scheduler import build_sync_scheduler, build_watch_scheduler
+from encore.scheduler import build_notify_scheduler, build_sync_scheduler, build_watch_scheduler
 from encore.storage import Storage, StorageError
 
 # readyz check name → app.state attribute holding the (optional) scheduler.
-_SCHEDULER_CHECKS = (("sync_scheduler", "scheduler"), ("watch_scheduler", "watch_scheduler"))
+_SCHEDULER_CHECKS = (
+    ("sync_scheduler", "scheduler"),
+    ("watch_scheduler", "watch_scheduler"),
+    ("notify_scheduler", "notify_scheduler"),
+)
 
 
 def _scheduler_statuses(app: FastAPI) -> tuple[dict[str, str], bool]:
@@ -65,10 +74,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         app.state.storage = Storage(data_dir)
         app.state.scheduler = build_sync_scheduler(app.state.storage)
         app.state.watch_scheduler = build_watch_scheduler(app.state.storage)
+        app.state.notify_scheduler = build_notify_scheduler(app.state.storage)
         try:
             yield
         finally:
-            for attr in ("scheduler", "watch_scheduler"):
+            for attr in ("scheduler", "watch_scheduler", "notify_scheduler"):
                 running = getattr(app.state, attr, None)
                 if running is not None:
                     running.shutdown(wait=False)

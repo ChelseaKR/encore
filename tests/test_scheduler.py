@@ -203,3 +203,62 @@ def test_scheduled_watch_builds_and_closes_its_own_mb_client(
     assert cycles == [fake_client]
     assert fake_client.closed  # closed even though the cycle ran fine
     storage.close()
+
+
+def test_notify_scheduler_stays_off_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    storage = Storage(tmp_path)
+    monkeypatch.setenv(scheduler.NOTIFY_INTERVAL_ENV, "0")
+    with caplog.at_level(logging.INFO):
+        assert scheduler.build_notify_scheduler(storage) is None
+    assert "notify scheduler disabled" in caplog.text
+    storage.close()
+
+
+def test_notify_scheduler_runs_in_minutes_not_hours(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The delivery queue is local, so the cadence is minutes: once an event
+    # exists, the user is waiting for it (F4, docs/adr/0012).
+    storage = Storage(tmp_path)
+    fake = FakeScheduler()
+    monkeypatch.setattr(scheduler, "BackgroundScheduler", lambda: fake)
+    monkeypatch.setenv(scheduler.NOTIFY_INTERVAL_ENV, "5")
+
+    result = scheduler.build_notify_scheduler(storage)
+
+    assert result is fake
+    args, kwargs = fake.jobs[0]
+    assert args[:2] == (scheduler._run_scheduled_delivery, "interval")
+    assert kwargs == {
+        "args": [storage],
+        "minutes": 5.0,
+        "id": scheduler.NOTIFY_JOB_ID,
+        "coalesce": True,
+        "max_instances": 1,
+    }
+    storage.close()
+
+
+def test_scheduled_delivery_runs_one_cycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    storage = Storage(tmp_path)
+    cycles: list[object] = []
+    monkeypatch.setattr(scheduler, "run_delivery_cycle", lambda s: cycles.append(s))
+
+    scheduler._run_scheduled_delivery(storage)
+
+    assert cycles == [storage]
+    storage.close()
+
+
+def test_an_unparseable_interval_falls_back_to_the_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(scheduler.NOTIFY_INTERVAL_ENV, "every-so-often")
+    with caplog.at_level(logging.WARNING):
+        value = scheduler._configured_interval(
+            scheduler.NOTIFY_INTERVAL_ENV, scheduler.DEFAULT_NOTIFY_INTERVAL_MINUTES
+        )
+    assert value == scheduler.DEFAULT_NOTIFY_INTERVAL_MINUTES
+    assert "falling back" in caplog.text
