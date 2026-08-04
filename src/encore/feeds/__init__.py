@@ -8,10 +8,11 @@ the capability token `encore.storage.Storage` mints and stores encrypted
 (docs/adr/0008), because a feed URL *is* the taste feed (dpia.md §4).
 """
 
-from encore.feeds.ical import render_ical
+from encore.feeds.ical import ICAL_EVENT_LIMIT, render_ical
 from encore.feeds.rss import RSS_EVENT_LIMIT, render_rss
 
 __all__ = [
+    "ICAL_EVENT_LIMIT",
     "RSS_EVENT_LIMIT",
     "render_ical",
     "render_rss",

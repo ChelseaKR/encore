@@ -40,7 +40,20 @@ def test_serve_invokes_uvicorn_with_parsed_args(monkeypatch: pytest.MonkeyPatch)
     exit_code = cli.main(["serve", "--host", "127.0.0.1", "--port", "9999"])
 
     assert exit_code == 0
-    assert calls == [("encore.app:app", {"host": "127.0.0.1", "port": 9999})]
+    assert calls == [("encore.app:app", {"host": "127.0.0.1", "port": 9999, "access_log": False})]
+
+
+@pytest.mark.no_secrets_in_logs
+def test_serve_disables_the_uvicorn_access_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    # OBS-11: the F5 capability token rides in the URL path, so uvicorn's
+    # access log would write it to stdout — `docker logs` in the shipped
+    # image — on every single feed poll. Pinned here as the flag it is;
+    # tests/test_app_feeds.py proves it against a real running server.
+    calls = _capture_uvicorn(monkeypatch)
+
+    assert cli.main(["serve"]) == 0
+
+    assert calls[0][1]["access_log"] is False
 
 
 def test_serve_data_dir_flag_reaches_the_app_via_env(

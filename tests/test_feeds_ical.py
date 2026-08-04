@@ -80,6 +80,37 @@ def test_text_values_are_escaped() -> None:
     assert "A\\, B\\; C" in summary
 
 
+def test_a_carriage_return_cannot_inject_a_content_line() -> None:
+    # The adversarial input: a MusicBrainz title carrying CRLF, and an artist
+    # name carrying a lone CR. Escaping that handled only "\n" let both
+    # through raw, and a parser that splits on CR (str.splitlines, for one)
+    # then read "SUMMARY:Injected" as a content line of its own.
+    release = make_release(title="Evil\r\nSUMMARY:Injected", artist_name="A\rB")
+    document = render_ical([release], now=NOW)
+
+    # Not one bare CR survives outside the CRLF line endings themselves.
+    assert "\r" not in document.replace("\r\n", "")
+    # The injected text never becomes a line, under either splitting rule.
+    assert not any(line.startswith("SUMMARY:Injected") for line in document.splitlines())
+    summaries = [line for line in _unfold(document) if line.startswith("SUMMARY:")]
+    assert len(summaries) == 1
+    # The hostile text survives as data: escaped breaks, no injected line.
+    assert "Evil\\nSUMMARY:Injected" in summaries[0]
+    assert "A\\nB" in summaries[0]
+
+
+def test_other_forbidden_controls_are_dropped_but_htab_survives() -> None:
+    # RFC 5545 §3.3.11: TEXT admits WSP (space, HTAB) and no other control.
+    release = make_release(title="Nul\x00Vert\x0bForm\x0cDel\x7f", artist_name="Tab\there")
+    summary = next(
+        line for line in _unfold(render_ical([release], now=NOW)) if line.startswith("SUMMARY:")
+    )
+    assert "NulVertFormDel" in summary
+    assert "Tab\there" in summary
+    for forbidden in ("\x00", "\x0b", "\x0c", "\x7f"):
+        assert forbidden not in summary
+
+
 def test_physical_lines_fold_at_75_octets() -> None:
     release = make_release(title="An Extremely Long Album Title " * 8)
     document = render_ical([release], now=NOW)

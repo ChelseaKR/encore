@@ -24,21 +24,38 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (docs/adr/0013): an unguessable token, minted lazily by `encore feeds show`,
   **Fernet-encrypted at rest** like the Plex token (migration v6), compared in
   constant time, revocable at a stroke with `encore feeds rotate`. Every
-  unauthorized shape — wrong token, no token minted, storage not open — is
-  the same bare 404 a nonexistent route returns, pinned by `no_outing` tests
-  against the sentinel artist. The calendar **never invents a day**: only
+  unauthorized shape — wrong token, no token minted, storage not open, a key
+  that no longer decrypts, a method other than `GET`/`HEAD`, a trailing slash
+  — is the byte-identical bare 404 a nonexistent route returns, pinned probe
+  by probe by `no_outing` tests against the sentinel artist. Making that true
+  rather than merely intended cost three FastAPI defaults: the app publishes
+  **no OpenAPI schema, no `/docs` and no `/redoc`** (all three were handing an
+  unauthenticated caller the exact gated URL template), answers a feed-path
+  method mismatch with 404 instead of `405 + Allow`, and does not redirect
+  trailing slashes. Both feeds send `Cache-Control: private, no-store`. The
+  calendar **never invents a day**: only
   day-precision MusicBrainz dates (from today forward, watched artists only)
   become VEVENTs; `2027` and `2027-03` announcements stay in the RSS feed
   verbatim. RFC 5545 mechanics (TEXT escaping, 75-octet folding, CRLF) are
   hand-rolled and pinned by tests rather than imported.
 
+  RFC 5545 escaping covers **every control character the TEXT production
+  forbids**, not just `\n`: a title carrying `\r\n` used to emit a bare CR
+  inside a content line, which any parser that splits on lone CRs — Python's
+  own `str.splitlines`, for one — reads as an injected line.
+
   Scope honesty: **no real reader or calendar client has subscribed yet** —
   feed shape is proven against the RFCs' rules offline, and "Google Calendar
   accepts this" joins the live-service items in the M2 exit soak. The token
-  travels in the URL, so the operator's own access logs will see it
-  (docs/adr/0013 §consequences) — encore's own logs never do, proven by a
-  `no_secrets_in_logs` test. One token gates both feeds; per-subscriber
-  tokens are out of scope at this size.
+  travels in the URL, so whatever the operator puts in front of encore — a
+  reverse proxy, the reader's own history — may see it (docs/adr/0013
+  §consequences). Encore's own logs never do, and neither does the server it
+  ships: `encore serve` runs uvicorn with `access_log=False`, because
+  otherwise every feed poll wrote the capability URL to `docker logs` for
+  good. Proven by a `no_secrets_in_logs` test that drives a **real running
+  uvicorn** and carries a positive control, the previous one having inspected
+  a stream the access log never reaches. One token gates both feeds;
+  per-subscriber tokens are out of scope at this size.
 
 - **F4 notifications — Apprise fan-out (M2, 2026-08-01).** `src/encore/notify/`
   turns the events F3 records into messages a human receives. Channels are

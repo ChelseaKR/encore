@@ -30,6 +30,7 @@ from encore.models import UpcomingReleaseView
 from encore.notify.render import release_type_label
 
 __all__ = [
+    "ICAL_EVENT_LIMIT",
     "MAX_LINE_OCTETS",
     "render_ical",
 ]
@@ -38,10 +39,43 @@ __all__ = [
 # the line break; longer lines are folded with CRLF + one space.
 MAX_LINE_OCTETS = 75
 
+# The route serves at most this many entries. Unlike RSS's window of 100, this
+# is a ceiling on a pathological library rather than the shape of the feature:
+# a calendar that silently forgot next month's release would be a bug, and the
+# query is already bounded by reality (only day-precision, future-dated
+# announcements for artists still in the Plex library qualify). Entries arrive
+# soonest-first, so a truncation drops the most distant announcements — the
+# ones most likely to move before they matter — and never the imminent ones.
+ICAL_EVENT_LIMIT = 500
+
+# RFC 5545 §3.3.11: the TEXT production admits WSP (space and HTAB) but no
+# other control character — CR and LF exist in a value only as the "\n"
+# escape, and DEL sits outside every TSAFE-CHAR range. Anything still in this
+# set after escaping is dropped rather than passed through.
+_FORBIDDEN_CONTROLS = str.maketrans(
+    dict.fromkeys([chr(code) for code in range(0x20) if code != 0x09] + ["\x7f"], None)
+)
+
 
 def _escape(text: str) -> str:
-    """Escape TEXT property values per RFC 5545 §3.3.11 (backslash first)."""
-    return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    r"""Escape a TEXT property value per RFC 5545 §3.3.11 (backslash first).
+
+    Line breaks are normalized before escaping: a CRLF is one break, and so is
+    a lone CR — Python's own `str.splitlines`, and every parser that agrees
+    with it, would otherwise read a raw CR from an upstream MusicBrainz title
+    as the end of the content line and the start of an injected one
+    (``Evil\r\nSUMMARY:Injected`` is exactly that attack). Every remaining
+    disallowed control character is then removed, so no value this function
+    returns can carry a byte the TEXT production forbids.
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    escaped = (
+        normalized.replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\n", "\\n")
+    )
+    return escaped.translate(_FORBIDDEN_CONTROLS)
 
 
 def _fold(line: str) -> Iterator[str]:
@@ -104,7 +138,11 @@ def render_ical(
         day = dt.date.fromisoformat(release.first_release_date)
         logical_lines += [
             "BEGIN:VEVENT",
-            f"UID:{release.release_group_mbid}@encore",
+            # UID is a TEXT value too. A MusicBrainz release-group id is a
+            # UUID, so escaping is a no-op on every real one — which is the
+            # point: no stored string reaches a content line unescaped, so the
+            # invariant holds without depending on an upstream id's shape.
+            "UID:" + _escape(release.release_group_mbid) + "@encore",
             f"DTSTAMP:{dtstamp}",
             f"DTSTART;VALUE=DATE:{day.strftime('%Y%m%d')}",
             "SUMMARY:" + _escape(_summary(release)),

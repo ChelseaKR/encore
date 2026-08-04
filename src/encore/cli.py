@@ -479,7 +479,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     # the M0 dead flag lacked (docs/adr/0005) — the storage layer now exists
     # for it to point at.
     os.environ[DATA_DIR_ENV] = str(resolve_data_dir(args.data_dir))
-    uvicorn.run("encore.app:app", host=args.host, port=args.port)
+    # No access log (OBS-11). The F5 feed capability token travels in the URL
+    # path, and uvicorn's access log writes the whole request line to stdout —
+    # which for the shipped container is `docker logs`, where it stays forever
+    # and outlives any rotation. A feed poll every fifteen minutes would print
+    # the token ninety-six times a day. Startup/error logging is untouched, so
+    # the operator still sees the server come up and still sees failures; if
+    # request-level observability ever lands it has to redact the path first.
+    uvicorn.run("encore.app:app", host=args.host, port=args.port, access_log=False)
     return 0
 
 
