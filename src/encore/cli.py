@@ -1,11 +1,18 @@
-"""Console-script entry point: serve, sync, watch, notify, channels, events.
+"""Console-script entry point: serve, sync, watch, notify, channels, events, feeds.
 
 `encore serve` runs the app under uvicorn; `encore plex configure` stores
 Plex credentials (token prompted or piped, never a CLI argument — flags leak
 into shell history); `encore sync` is the on-demand library sync (F1);
 `encore watch` is the on-demand release-watch cycle (F3); `encore channels`
 manages Apprise notification destinations and `encore notify` runs one
-delivery cycle (F4). The scheduled paths live in `encore.scheduler`.
+delivery cycle (F4); `encore feeds` mints and rotates the F5 feed URLs. The
+scheduled paths live in `encore.scheduler`.
+
+`encore feeds show` is the one place the feed token is deliberately printed:
+the URL *is* the capability, and handing it to the operator is this command's
+entire job. It prints to a terminal the operator already trusts with the data
+directory — never to a log — and both subcommands say plainly that sharing
+the URL shares the taste feed and that `rotate` is the revocation.
 
 `encore events` is F4's **in-app feed** — the always-works fallback for when
 every channel is broken. It is a CLI surface rather than an HTTP route on
@@ -81,6 +88,23 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     events.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
     events.add_argument("--limit", type=int, default=20, help="How many events to show")
+
+    feeds = subparsers.add_parser("feeds", help="Standing feed URLs: RSS + iCal (F5)")
+    feeds_sub = feeds.add_subparsers(dest="feeds_command", required=True)
+    feeds_show = feeds_sub.add_parser(
+        "show", help="Print the feed URLs, minting the token on first use"
+    )
+    feeds_rotate = feeds_sub.add_parser(
+        "rotate", help="Replace the feed token — every previously shared feed URL stops working"
+    )
+    for feeds_command in (feeds_show, feeds_rotate):
+        feeds_command.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+        feeds_command.add_argument(
+            "--base-url",
+            default="http://127.0.0.1:8321",
+            help="The URL your encore server is reachable at, as feed readers will see it "
+            "(default: http://127.0.0.1:8321)",
+        )
 
     channels = subparsers.add_parser("channels", help="Notification channels (Apprise)")
     channels_sub = channels.add_subparsers(dest="channels_command", required=True)
@@ -284,6 +308,39 @@ def _cmd_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_feed_urls(base_url: str, token: str) -> None:
+    """Print the two feed URLs and the sharing caution they always travel with."""
+    base = base_url.rstrip("/")
+    print(f"RSS (release events):    {base}/feeds/{token}/releases.xml")
+    print(f"iCal (upcoming dates):   {base}/feeds/{token}/upcoming.ics")
+    print()
+    print("Anyone with these URLs can read your release feed — they reveal the")
+    print("artists in your library. Share them only where you'd share that, and")
+    print("run `encore feeds rotate` to revoke every previously shared URL.")
+
+
+def _cmd_feeds(args: argparse.Namespace) -> int:
+    """Dispatch an `encore feeds …` subcommand (show or rotate)."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        if args.feeds_command == "rotate":
+            token = storage.rotate_feed_token()
+            print("Feed token rotated: the previous feed URLs no longer work.")
+        else:
+            token = storage.ensure_feed_token()
+    except SecretDecryptionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    _print_feed_urls(args.base_url, token)
+    return 0
+
+
 def _cmd_channels_add(args: argparse.Namespace) -> int:
     """Add a notification channel (URL prompted or piped, encrypted at rest)."""
     url = _read_channel_url()
@@ -433,6 +490,7 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "notify": _cmd_notify,
     "events": _cmd_events,
     "channels": _cmd_channels,
+    "feeds": _cmd_feeds,
     "plex": _cmd_plex,
 }
 

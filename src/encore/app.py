@@ -1,29 +1,34 @@
 """The FastAPI app factory.
 
-Scope so far (F0 + F1 + F3 + F4): health endpoints, the storage layer, and the
-three background schedulers (Plex sync, MusicBrainz release watch,
-notification delivery). There is still **no HTTP read surface for library
-content** — the in-app event feed is deliberately CLI-only until F6 brings the
-admin password with it, because an unauthenticated `/events` route on a
-published container port would hand a household observer the exact taste feed
-the no-outing lens exists to protect (docs/adr/0012). `/livez` and
-`/readyz` are kept distinct per OBS-18/19/20 — `readyz` performs a real
-database check plus a scheduler check (a started scheduler that has died
-makes the instance unready; a deliberately disabled or credential-gated one
-does not). `livez` never depends on anything but the process being up, so it
-can't false-negative during a slow dependency check.
+Scope so far (F0 + F1 + F3 + F4 + F5): health endpoints, the storage layer,
+the three background schedulers (Plex sync, MusicBrainz release watch,
+notification delivery), and the token-gated standing feeds (RSS + iCal). The
+feed routes are the app's first read surface for library content, and they
+ship *with* their access control: the unguessable token in the path is the
+capability, checked in constant time against the encrypted-at-rest stored
+token, and every failure — no storage, no token minted, wrong token — is the
+same bare 404, so an unauthorized probe learns nothing, not even that the
+route exists (the no-outing lens, docs/adr/0012 §4 applied to F5). The
+unauthenticated in-app *event* feed remains CLI-only until F6 brings the
+admin password. `/livez` and `/readyz` are kept distinct per OBS-18/19/20 —
+`readyz` performs a real database check plus a scheduler check (a started
+scheduler that has died makes the instance unready; a deliberately disabled
+or credential-gated one does not). `livez` never depends on anything but the
+process being up, so it can't false-negative during a slow dependency check.
 """
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse, Response
 
 from encore import __version__
+from encore.feeds import RSS_EVENT_LIMIT, render_ical, render_rss
 from encore.scheduler import build_notify_scheduler, build_sync_scheduler, build_watch_scheduler
 from encore.storage import Storage, StorageError
 
@@ -54,6 +59,49 @@ def _scheduler_statuses(app: FastAPI) -> tuple[dict[str, str], bool]:
             checks[name] = "stopped"
             unready = True
     return checks, unready
+
+
+def _register_feed_routes(app: FastAPI) -> None:
+    """Attach the F5 standing-feed routes (RSS + iCal) to the app."""
+
+    def _feed_storage(candidate_token: str) -> Storage:
+        """Return the storage layer iff ``candidate_token`` is *the* feed token.
+
+        Every failure shape — storage not initialized, no token ever minted,
+        wrong token — raises the same bare 404: a capability URL either works
+        or does not exist, and distinguishing "not yet" from "wrong" would
+        hand an unauthorized prober information. The comparison is
+        constant-time (a timing oracle on a secret compare is the classic
+        way capability tokens fall).
+        """
+        storage: Storage | None = getattr(app.state, "storage", None)
+        if storage is not None:
+            stored_token = storage.get_feed_token()
+            if stored_token is not None and secrets.compare_digest(
+                candidate_token.encode(), stored_token.encode()
+            ):
+                return storage
+        raise HTTPException(status_code=404)
+
+    @app.get("/feeds/{token}/releases.xml")
+    def rss_feed(token: str) -> Response:
+        # The F5 RSS feed: newest release events, rendered once, shared with F4.
+        storage = _feed_storage(token)
+        views = storage.list_event_views(limit=RSS_EVENT_LIMIT)
+        machine_identifier = storage.get_plex_machine_identifier()
+        return Response(
+            content=render_rss(views, machine_identifier),
+            media_type="application/rss+xml; charset=utf-8",
+        )
+
+    @app.get("/feeds/{token}/upcoming.ics")
+    def ical_feed(token: str) -> Response:
+        # The F5 iCal feed: announced-but-not-out releases as all-day entries.
+        storage = _feed_storage(token)
+        return Response(
+            content=render_ical(storage.list_upcoming_releases()),
+            media_type="text/calendar; charset=utf-8",
+        )
 
 
 def create_app(data_dir: str | Path | None = None) -> FastAPI:
@@ -116,6 +164,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             return JSONResponse(status_code=503, content={"status": "unready", "checks": checks})
         return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})
 
+    _register_feed_routes(app)
     return app
 
 

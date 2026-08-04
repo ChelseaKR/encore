@@ -29,6 +29,7 @@ this module is where the gettext seam earns its keep.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -42,6 +43,7 @@ __all__ = [
     "RenderedNotification",
     "cover_art_url",
     "plex_artist_url",
+    "release_type_label",
     "render_digest",
     "render_event",
     "render_test",
@@ -78,12 +80,23 @@ def plex_artist_url(machine_identifier: str | None, plex_rating_key: str | None)
     return f"{PLEX_APP_BASE_URL}/#!/server/{quote(machine_identifier)}/details?key={key}"
 
 
-def _release_type(view: EventView) -> str:
-    """Render the release type: ``Album``, ``Album (Live)``, or a placeholder."""
-    primary = view.primary_type or _("Unknown type")
-    if view.secondary_types:
-        return f"{primary} ({', '.join(view.secondary_types)})"
+def release_type_label(primary_type: str | None, secondary_types: Sequence[str]) -> str:
+    """Render MusicBrainz's type pair: ``Album``, ``Album (Live)``, or a placeholder.
+
+    Public because F5's calendar renders the same label from an
+    `UpcomingReleaseView`: an EP or a live record must not read as a plain
+    studio album on a calendar when it reads as "Album (Live)" in the feed
+    next to it.
+    """
+    primary = primary_type or _("Unknown type")
+    if secondary_types:
+        return f"{primary} ({', '.join(secondary_types)})"
     return primary
+
+
+def _release_type(view: EventView) -> str:
+    """Render an event's release type."""
+    return release_type_label(view.primary_type, view.secondary_types)
 
 
 def _release_date(view: EventView) -> str:
