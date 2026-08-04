@@ -7,11 +7,11 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · `M1` in progress (F0 storage layer, F1 read-only Plex
-library sync, and F2 MusicBrainz matching engine landed; sync does not feed the
-matcher automatically yet) · independent personal open-source project ·
-Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
-client material.
+**Status:** pre-alpha · `M2` in progress (F0 storage, F1 read-only Plex sync,
+F2 MusicBrainz matching, F3 release watching, F4 notifications, and F5 RSS/iCal
+feeds landed; F6 onboarding wizard remains) · independent personal open-source
+project · Apache-2.0 · unaffiliated with any employer or client; contains no
+proprietary or client material.
 
 ## Quickstart (developing)
 
@@ -88,7 +88,8 @@ encore/
 │   │                          #   baseline-seed, emit new/upcoming/date_changed events
 │   ├── notify/                # F4 notifications: render events, Apprise fan-out,
 │   │                          #   retry/backoff, instant + digest cadences
-│   │                          #   (RSS/iCal feeds are F5, still to come)             [M2]
+│   ├── feeds/                 # F5 standing feeds: RSS release feed + iCal of
+│   │                          #   upcoming dates, behind a rotatable token URL
 │   └── recommend/             # ListenBrainz labs similar-artists (F7, F8)           [M3]
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
 ├── slos/                       # SLO declarations (Tier A — this is a running service)
@@ -149,8 +150,10 @@ Encore keeps everything in its own SQLite file on your own disk. It talks to
 MusicBrainz and ListenBrainz (your artist names and MBIDs leave your machine, tied to
 your IP) and to whatever notification channel you configure (release titles and
 artist names go wherever you pointed it) — both are disclosure choices, not
-exceptions to "local-first." Your Plex token and any Apprise URLs are encrypted at
-rest. Nothing is sent anywhere else, ever. Full data inventory and threat model in
+exceptions to "local-first." The RSS/iCal feed URLs carry an unguessable, rotatable
+token, because the feed *is* your taste data — sharing the URL is sharing that.
+Your Plex token, any Apprise URLs, and the feed token are encrypted at rest.
+Nothing is sent anywhere else, ever. Full data inventory and threat model in
 [`docs/RESPONSIBLE-TECH-AUDITS.md`](docs/RESPONSIBLE-TECH-AUDITS.md) and the
 [DPIA](docs/audits/dpia.md).
 

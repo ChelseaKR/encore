@@ -8,6 +8,55 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **F5 standing feeds — RSS + iCal behind a capability URL (M2, 2026-08-04).**
+  `src/encore/feeds/` gives the release radar two subscribe-once surfaces: an
+  RSS 2.0 feed of release events (`/feeds/<token>/releases.xml`, newest 100,
+  items rendered by the same translated F4 renderer notifications use, with
+  the event id as a stable non-permalink `guid` and MusicBrainz's public
+  release-group page as the item link) and an iCal feed of upcoming release
+  dates (`/feeds/<token>/upcoming.ics`) — announced releases land in the
+  user's actual calendar as all-day, `TRANSP:TRANSPARENT` entries whose `UID`
+  is the release-group MBID, so a date change *moves* the entry instead of
+  duplicating it. Both surfaces share F4's type label
+  (`release_type_label`, lifted out of the notification renderer), so a live
+  record reads as "Album (Live)" on the calendar and in the feed rather than
+  drifting into a plain "Album" on one of them. The feeds are taste data, so the URL is the auth
+  (docs/adr/0013): an unguessable token, minted lazily by `encore feeds show`,
+  **Fernet-encrypted at rest** like the Plex token (migration v6), compared in
+  constant time, revocable at a stroke with `encore feeds rotate`. Every
+  unauthorized shape — wrong token, no token minted, storage not open, a key
+  that no longer decrypts, a method other than `GET`/`HEAD`, a trailing slash
+  — is the byte-identical bare 404 a nonexistent route returns, pinned probe
+  by probe by `no_outing` tests against the sentinel artist. Making that true
+  rather than merely intended cost three FastAPI defaults: the app publishes
+  **no OpenAPI schema, no `/docs` and no `/redoc`** (all three were handing an
+  unauthenticated caller the exact gated URL template), answers a feed-path
+  method mismatch with 404 instead of `405 + Allow`, and does not redirect
+  trailing slashes. Both feeds send `Cache-Control: private, no-store`. The
+  calendar **never invents a day**: only
+  day-precision MusicBrainz dates (from today forward, watched artists only)
+  become VEVENTs; `2027` and `2027-03` announcements stay in the RSS feed
+  verbatim. RFC 5545 mechanics (TEXT escaping, 75-octet folding, CRLF) are
+  hand-rolled and pinned by tests rather than imported.
+
+  RFC 5545 escaping covers **every control character the TEXT production
+  forbids**, not just `\n`: a title carrying `\r\n` used to emit a bare CR
+  inside a content line, which any parser that splits on lone CRs — Python's
+  own `str.splitlines`, for one — reads as an injected line.
+
+  Scope honesty: **no real reader or calendar client has subscribed yet** —
+  feed shape is proven against the RFCs' rules offline, and "Google Calendar
+  accepts this" joins the live-service items in the M2 exit soak. The token
+  travels in the URL, so whatever the operator puts in front of encore — a
+  reverse proxy, the reader's own history — may see it (docs/adr/0013
+  §consequences). Encore's own logs never do, and neither does the server it
+  ships: `encore serve` runs uvicorn with `access_log=False`, because
+  otherwise every feed poll wrote the capability URL to `docker logs` for
+  good. Proven by a `no_secrets_in_logs` test that drives a **real running
+  uvicorn** and carries a positive control, the previous one having inspected
+  a stream the access log never reaches. One token gates both feeds;
+  per-subscriber tokens are out of scope at this size.
+
 - **F4 notifications — Apprise fan-out (M2, 2026-08-01).** `src/encore/notify/`
   turns the events F3 records into messages a human receives. Channels are
   Apprise destinations (ntfy, Discord, email, Telegram, Pushover, and the
@@ -186,8 +235,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   landed as `audit-2026-07-05/encore-REMEDIATION.md`'s dated status markers and
   execution log — see that file for the full per-item accounting.
 
+### Security
+
+- **`cryptography` raised to `>=50,<51` (2026-08-04).** The locked 49.0.0 picked
+  up GHSA-g6cj-pr64-35w5 (CVSS 8.2, High) after the 2026-08-01 CI run, so both
+  `pip-audit` and `osv-scanner` — and therefore `make verify` and CI — were red
+  on `main` before this branch touched anything. The floor moved to 50 rather
+  than the ceiling merely widening, because everything below it is the
+  vulnerable range. This is the library that encrypts the Plex token, Apprise
+  URLs, and now the feed token, so it is not a bump to defer. Lock updated with
+  `--upgrade-package cryptography`; nothing else moved.
+
 ### Changed
 
+- **Audit truth-up for the F5 surface (2026-08-04).** `docs/audits/residual-risk.md`
+  activates RR-06 (feed tokens are live bearer credentials) and adds RR-07
+  (one token means all-or-nothing revocation); the DPIA inventory gains the
+  encrypted feed token and a feed-*content* row naming cloud feed readers and
+  calendar providers as recipients; the threat model records the feeds as the
+  first inbound surface returning library content; and `docs/ROADMAP.md` §1
+  finally says M2 rather than M1, with the a11y rows explaining why a feed
+  document is not an a11y surface and the SLO row marking the RED-metrics debt
+  due now that HTTP routes exist.
 - **Standards audit remediation (2026-07-14).** Raised the declared mypy floor to
   `>=1.18`, restored automatic CodeQL scans on every `main` update plus a weekly
   schedule, and aligned the README/i18n declarations with the canonical standards

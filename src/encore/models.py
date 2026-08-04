@@ -2,10 +2,10 @@
 
 Scope so far: the ``settings`` singleton (F0), the ``artists`` inventory
 (F1), the ``artist_matches`` identity cache + review queue (F2), the
-``release_groups`` + ``events`` watch tables (F3), and the ``channels`` +
-``deliveries`` notification tables (F4). Feeds and recommendations land with
-the features that read and write them (F5-F7), each added by its own
-migration in `encore.storage`.
+``release_groups`` + ``events`` watch tables (F3), the ``channels`` +
+``deliveries`` notification tables (F4), and the feed token on ``settings``
+(F5). Recommendations land with the features that read and write them
+(F7+), each added by its own migration in `encore.storage`.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ __all__ = [
     "NotificationChannel",
     "ReleaseEvent",
     "ReleaseGroup",
+    "UpcomingReleaseView",
 ]
 
 SETTINGS_ROW_ID = 1
@@ -51,6 +52,10 @@ class AppSettings(SQLModel, table=True):
     ``plex_machine_identifier`` is the server's own public identifier, learned
     (read-only) during a sync and used to build the ``app.plex.tv`` deep links
     F4 notifications carry — it is not a secret and not taste data.
+    ``feed_token_cipher`` holds the F5 feed token (the capability that gates
+    the RSS/iCal routes): the feeds are pure taste data, so the token is a
+    secret and is stored encrypted like the Plex token (docs/adr/0008),
+    rotatable via `Storage.rotate_feed_token`.
     """
 
     __tablename__ = "settings"
@@ -60,6 +65,7 @@ class AppSettings(SQLModel, table=True):
     plex_token_cipher: bytes | None = Field(default=None)
     plex_library_keys: str | None = Field(default=None)
     plex_machine_identifier: str | None = Field(default=None)
+    feed_token_cipher: bytes | None = Field(default=None)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
@@ -259,3 +265,24 @@ class EventView:
     artist_mbid: str
     artist_name: str
     plex_rating_key: str | None
+
+
+@dataclass(frozen=True)
+class UpcomingReleaseView:
+    """One announced-but-not-out release for the F5 iCal feed — not a table.
+
+    Unlike `EventView` this is *state*, not history: the calendar shows what
+    is currently known to be coming, so it reads ``release_groups`` (with the
+    latest ``first_release_date``) rather than the append-only ``events``
+    log — a ``date_changed`` event moves the calendar entry instead of
+    duplicating it. Every field is taste data — an `UpcomingReleaseView`
+    must never reach a log line (docs/audits/dpia.md §4).
+    """
+
+    release_group_mbid: str
+    title: str
+    primary_type: str | None
+    secondary_types: tuple[str, ...]
+    first_release_date: str
+    artist_mbid: str
+    artist_name: str

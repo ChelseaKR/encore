@@ -3,7 +3,7 @@
 Design (docs/adr/0005 + docs/adr/0008): a single SQLite database in a mounted
 volume is the only datastore; a Fernet key file sits beside it and encrypts
 the secret-bearing columns (the Plex token since F0, Apprise channel URLs
-since F4; feed tokens join them when F5 lands). Schema changes run as ordered
+since F4, the feed token since F5). Schema changes run as ordered
 forward migrations tracked in SQLite's ``PRAGMA user_version`` — there is no
 down-migration story, matching the single-operator deployment model
 (backup = copy the directory).
@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, event
+from sqlalchemy import Connection, event, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, SQLModel, col, create_engine, select
 
@@ -36,6 +37,7 @@ from encore.models import (
     NotificationChannel,
     ReleaseEvent,
     ReleaseGroup,
+    UpcomingReleaseView,
     utcnow,
 )
 from encore.secretstore import SecretCipher, SecretKeyError
@@ -119,6 +121,20 @@ def _migration_0005_notifications(connection: Connection) -> None:
         )
 
 
+def _migration_0006_feed_token(connection: Connection) -> None:
+    """v6 (F5): add ``settings.feed_token_cipher`` (guarded — no-op on fresh).
+
+    The token itself is *not* generated here: it is minted lazily by
+    `Storage.ensure_feed_token` the first time the user asks for their feed
+    URLs, so a database that has never served a feed holds no capability to
+    leak.
+    """
+    SQLModel.metadata.create_all(connection)
+    settings_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(settings)")}
+    if "feed_token_cipher" not in settings_columns:
+        connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN feed_token_cipher BLOB")
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -127,6 +143,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0003_artist_matches,
     _migration_0004_release_watching,
     _migration_0005_notifications,
+    _migration_0006_feed_token,
 )
 
 
@@ -743,6 +760,108 @@ class Storage:
                 settled += 1
             session.commit()
         return settled
+
+    # -- standing feeds (F5) ---------------------------------------------------
+
+    def get_feed_token(self) -> str | None:
+        """Return the feed token, or ``None`` if none has been minted yet.
+
+        Callers must treat the result as a credential: it is the entire
+        access control on the F5 feed routes, so it is never logged and only
+        printed by the CLI surface whose job is handing it to the user.
+
+        Raises:
+            SecretDecryptionError: the key file does not match the ciphertext.
+        """
+        with self.session() as session:
+            settings = self.get_settings(session)
+            if settings.feed_token_cipher is None:
+                return None
+            return self.cipher.decrypt(settings.feed_token_cipher)
+
+    def ensure_feed_token(self) -> str:
+        """Return the feed token, minting one on first use (encrypted at rest)."""
+        existing = self.get_feed_token()
+        if existing is not None:
+            return existing
+        return self.rotate_feed_token()
+
+    def rotate_feed_token(self) -> str:
+        """Replace the feed token with a fresh one — every old feed URL dies now.
+
+        This is the revocation story the audits promise (residual-risk RR-06):
+        a feed URL pasted somewhere regrettable stops working the moment the
+        operator rotates. Revocation is all-or-nothing by design — one token
+        gates both feeds and every subscriber (RR-07, docs/adr/0013).
+        """
+        token = secrets.token_urlsafe(32)
+        with self.session() as session:
+            settings = self.get_settings(session)
+            settings.feed_token_cipher = self.cipher.encrypt(token)
+            settings.updated_at = utcnow()
+            session.add(settings)
+            session.commit()
+        return token
+
+    def list_upcoming_releases(self, today: date | None = None) -> list[UpcomingReleaseView]:
+        """Announced releases from today forward, for the iCal feed (F5).
+
+        Only **day-precision** dates qualify: a bare ``2027`` or ``2027-03``
+        announcement cannot become a calendar entry without inventing a day
+        MusicBrainz did not publish (the same no-invented-precision rule the
+        F4 renderer follows), so partial dates stay in the RSS feed only.
+        Scope matches the watch list: matched artists still present in Plex —
+        an unwatched artist's stored announcements drop off the calendar.
+        Full ISO dates compare correctly as text, so the cut-off is SQL;
+        rows are ordered by date then title.
+        """
+        if today is None:
+            today = utcnow().date()
+        with self.session() as session:
+            statement = (
+                select(ReleaseGroup, ArtistMatch)
+                .join(
+                    ArtistMatch,
+                    ArtistMatch.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
+                )
+                .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
+                .where(
+                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                    func.length(ReleaseGroup.first_release_date) == 10,
+                    ReleaseGroup.first_release_date >= today.isoformat(),
+                )
+                .order_by(col(ReleaseGroup.first_release_date), col(ReleaseGroup.title))
+            )
+            views: list[UpcomingReleaseView] = []
+            seen_mbids: set[str] = set()
+            for group, match in session.exec(statement).all():
+                if group.mbid in seen_mbids:
+                    # Two Plex rows matched to one MBID (e.g. a duplicate
+                    # library entry) must not duplicate the calendar entry.
+                    continue
+                seen_mbids.add(group.mbid)
+                try:
+                    date.fromisoformat(group.first_release_date)
+                except ValueError:  # pragma: no cover - MB dates are ISO; belt and braces
+                    continue
+                secondary = (
+                    tuple(json.loads(group.secondary_types_json))
+                    if group.secondary_types_json
+                    else ()
+                )
+                views.append(
+                    UpcomingReleaseView(
+                        release_group_mbid=group.mbid,
+                        title=group.title,
+                        primary_type=group.primary_type,
+                        secondary_types=secondary,
+                        first_release_date=group.first_release_date,
+                        artist_mbid=group.artist_mbid,
+                        artist_name=match.artist_name,
+                    )
+                )
+            return views
 
     # -- the read model shared by notifications, the in-app feed, and F5 -------
 

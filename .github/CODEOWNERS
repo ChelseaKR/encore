@@ -25,12 +25,20 @@
 # inherits F2's match quality.
 /src/encore/matching/                  @ChelseaKR
 
+# The HTTP surface's access control. F5 put the whole decision in one file:
+# the capability-token check, the one opaque 404 every unauthorized probe
+# gets, and the schema/docs/redirect defaults that had to be turned off for
+# that 404 to mean anything (docs/adr/0013 §Decision 2).
+/src/encore/app.py                     @ChelseaKR
+
 # Responsible-tech / privacy audits and the mechanical no-outing guards
-# (the read-only-Plex contract tests and the sync/scheduler logging sentinels).
+# (the read-only-Plex contract tests, the sync/scheduler logging sentinels,
+# and the feed-route probe guards that pin the indistinguishable 404).
 /docs/RESPONSIBLE-TECH-AUDITS.md       @ChelseaKR
 /docs/audits/                          @ChelseaKR
 /tests/test_plex_client.py             @ChelseaKR
 /tests/test_scheduler.py               @ChelseaKR
+/tests/test_app_feeds.py               @ChelseaKR
 
 # Governance and supply chain.
 /.github/                              @ChelseaKR
