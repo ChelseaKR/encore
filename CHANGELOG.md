@@ -16,6 +16,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Give the pre-UI Accessibility N/A state an explicit reason in the standards
+  register so automated conformance does not accept an unexplained exemption.
 - **F5 standing feeds — RSS + iCal behind a capability URL (M2, 2026-08-04).**
   `src/encore/feeds/` gives the release radar two subscribe-once surfaces: an
   RSS 2.0 feed of release events (`/feeds/<token>/releases.xml`, newest 100,
