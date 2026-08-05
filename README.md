@@ -7,11 +7,11 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · `M1` in progress (F0 storage layer, F1 read-only Plex
-library sync, and F2 MusicBrainz matching engine landed; sync does not feed the
-matcher automatically yet) · independent personal open-source project ·
-Apache-2.0 · unaffiliated with any employer or client; contains no proprietary or
-client material.
+**Status:** pre-alpha · `M2` in progress (F0 storage, F1 read-only Plex sync,
+F2 MusicBrainz matching, F3 release watching, F4 notifications, and F5 RSS/iCal
+feeds landed; F6 onboarding wizard remains) · independent personal open-source
+project · Apache-2.0 · unaffiliated with any employer or client; contains no
+proprietary or client material.
 
 ## Quickstart (developing)
 
@@ -74,16 +74,23 @@ encore/
 │   │                          #   the htmx UI + JSON API as features land
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
 │   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
-│   ├── models.py              # SQLModel tables — settings, artists inventory, artist matches
+│   ├── models.py              # SQLModel tables — settings, artists, matches, releases,
+│   │                          #   events, notification channels, delivery queue
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
 │   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
-│   ├── scheduler.py           # background sync scheduler (daily default, off w/o creds)
+│   ├── i18n.py                # the gettext seam every user-facing string routes through
+│   ├── scheduler.py           # background schedulers: Plex sync, MB release watch,
+│   │                          #   notification delivery
 │   ├── matching/              # MusicBrainz matching + review queue (F2)
 │   │                          #   client/scorer/engine + artist_matches cache
-│   ├── watch/                  # release-group polling + diffing (F3)               [M2]
-│   ├── notify/                  # Apprise fan-out, RSS/iCal feeds (F4, F5)           [M2]
-│   └── recommend/              # ListenBrainz labs similar-artists (F7, F8)          [M3]
+│   ├── watch/                 # F3 release watching: poll release-groups, diff,
+│   │                          #   baseline-seed, emit new/upcoming/date_changed events
+│   ├── notify/                # F4 notifications: render events, Apprise fan-out,
+│   │                          #   retry/backoff, instant + digest cadences
+│   ├── feeds/                 # F5 standing feeds: RSS release feed + iCal of
+│   │                          #   upcoming dates, behind a rotatable token URL
+│   └── recommend/             # ListenBrainz labs similar-artists (F7, F8)           [M3]
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
 ├── slos/                       # SLO declarations (Tier A — this is a running service)
 ├── tests/
@@ -128,7 +135,7 @@ never committed. Per-repo *values* live in [`docs/ROADMAP.md`](docs/ROADMAP.md) 
 | Release & Versioning | ✅ | SemVer; signed tags (from M4, first release); Keep-a-Changelog; GHCR by digest, never `:latest` |
 | Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A — no UI surface today**; becomes merge-blocking at M2 with the first real UI |
 | Observability | ✅ | Tier A (running service) — `/livez`+`/readyz` today; structured JSON logs + PII/secret redaction **land at M1–M2** with the routes/pollers they measure (`docs/ROADMAP.md` §11) |
-| Internationalization | **N/A — no user-facing strings at M0** | Gettext seam activates at M2 when the first user-facing string ships — see [`docs/I18N.md`](docs/I18N.md) |
+| Internationalization | **Seam live, English-only** | The gettext seam (`src/encore/i18n.py`) went live with F4's notification strings — the project's first user-facing text — with the extraction template gated in `make verify`. No second catalog ships yet; see [`docs/I18N.md`](docs/I18N.md) |
 | AI Evaluation | **N/A — no LLM/model** | Flips to Applies if F14 ("vibe" recs) ever lands; accepted decision in ADR-0009 |
 | Quality & Metrics | ✅ | Metrics ledger in `docs/ROADMAP.md`; `make verify` reproduces the CI gate set |
 | Documentation | ✅ | This README + ADRs + ROADMAP + RESPONSIBLE-TECH-AUDITS + CHANGELOG, kept current |
@@ -143,8 +150,10 @@ Encore keeps everything in its own SQLite file on your own disk. It talks to
 MusicBrainz and ListenBrainz (your artist names and MBIDs leave your machine, tied to
 your IP) and to whatever notification channel you configure (release titles and
 artist names go wherever you pointed it) — both are disclosure choices, not
-exceptions to "local-first." Your Plex token and any Apprise URLs are encrypted at
-rest. Nothing is sent anywhere else, ever. Full data inventory and threat model in
+exceptions to "local-first." The RSS/iCal feed URLs carry an unguessable, rotatable
+token, because the feed *is* your taste data — sharing the URL is sharing that.
+Your Plex token, any Apprise URLs, and the feed token are encrypted at rest.
+Nothing is sent anywhere else, ever. Full data inventory and threat model in
 [`docs/RESPONSIBLE-TECH-AUDITS.md`](docs/RESPONSIBLE-TECH-AUDITS.md) and the
 [DPIA](docs/audits/dpia.md).
 

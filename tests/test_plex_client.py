@@ -113,4 +113,7 @@ def test_client_rejects_a_writable_session() -> None:
 
 def test_client_facade_exposes_no_mutating_operation() -> None:
     public_names = {name for name in dir(PlexMusicClient) if not name.startswith("_")}
-    assert public_names == {"artists", "base_url", "music_libraries"}
+    # machine_identifier joined the facade with F4 (Plex deep links in
+    # notifications). It is a read of a value plexapi already holds — the
+    # facade still exposes no verb that could write to Plex.
+    assert public_names == {"artists", "base_url", "machine_identifier", "music_libraries"}

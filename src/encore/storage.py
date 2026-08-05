@@ -2,25 +2,44 @@
 
 Design (docs/adr/0005 + docs/adr/0008): a single SQLite database in a mounted
 volume is the only datastore; a Fernet key file sits beside it and encrypts
-the secret-bearing columns (Plex token today; Apprise URLs and feed tokens
-when F4/F5 land). Schema changes run as ordered forward migrations tracked in
-SQLite's ``PRAGMA user_version`` — there is no down-migration story, matching
-the single-operator deployment model (backup = copy the directory).
+the secret-bearing columns (the Plex token since F0, Apprise channel URLs
+since F4, the feed token since F5). Schema changes run as ordered
+forward migrations tracked in SQLite's ``PRAGMA user_version`` — there is no
+down-migration story, matching the single-operator deployment model
+(backup = copy the directory).
 """
 
 from __future__ import annotations
 
 import json
 import os
+import secrets
 from collections.abc import Callable, Sequence
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, event
-from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlalchemy import Connection, event, func
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlmodel import Session, SQLModel, col, create_engine, select
 
-from encore.models import MATCH_STATUSES, SETTINGS_ROW_ID, AppSettings, ArtistMatch, utcnow
+from encore.models import (
+    CHANNEL_MODES,
+    DELIVERY_STATUSES,
+    MATCH_STATUSES,
+    RELEASE_EVENT_KINDS,
+    SETTINGS_ROW_ID,
+    AppSettings,
+    Artist,
+    ArtistMatch,
+    Delivery,
+    EventView,
+    NotificationChannel,
+    ReleaseEvent,
+    ReleaseGroup,
+    UpcomingReleaseView,
+    utcnow,
+)
 from encore.secretstore import SecretCipher, SecretKeyError
 
 __all__ = [
@@ -82,12 +101,49 @@ def _migration_0003_artist_matches(connection: Connection) -> None:
     SQLModel.metadata.create_all(connection)
 
 
+def _migration_0004_release_watching(connection: Connection) -> None:
+    """v4 (F3): create ``release_groups`` + ``events`` (guarded — no-op on fresh)."""
+    SQLModel.metadata.create_all(connection)
+
+
+def _migration_0005_notifications(connection: Connection) -> None:
+    """v5 (F4): create ``channels`` + ``deliveries``; add the Plex machine id.
+
+    Both steps are guarded, so this is correct for a fresh database (v1
+    already created everything from current metadata) and for a real v4
+    database written by the F3 build (which has neither).
+    """
+    SQLModel.metadata.create_all(connection)
+    settings_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(settings)")}
+    if "plex_machine_identifier" not in settings_columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE settings ADD COLUMN plex_machine_identifier VARCHAR"
+        )
+
+
+def _migration_0006_feed_token(connection: Connection) -> None:
+    """v6 (F5): add ``settings.feed_token_cipher`` (guarded — no-op on fresh).
+
+    The token itself is *not* generated here: it is minted lazily by
+    `Storage.ensure_feed_token` the first time the user asks for their feed
+    URLs, so a database that has never served a feed holds no capability to
+    leak.
+    """
+    SQLModel.metadata.create_all(connection)
+    settings_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(settings)")}
+    if "feed_token_cipher" not in settings_columns:
+        connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN feed_token_cipher BLOB")
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0001_initial_schema,
     _migration_0002_artists_and_library_selection,
     _migration_0003_artist_matches,
+    _migration_0004_release_watching,
+    _migration_0005_notifications,
+    _migration_0006_feed_token,
 )
 
 
@@ -340,3 +396,535 @@ class Storage:
             session.commit()
             session.refresh(row)
         return row
+
+    # -- release watching (F3) -------------------------------------------------
+
+    def list_watched_artist_mbids(self) -> list[str]:
+        """Distinct MBIDs to poll: matched artists still present in Plex.
+
+        Joins ``artist_matches`` (status ``auto``/``manual``, non-NULL MBID)
+        to ``artists`` on the Plex rating key and excludes tombstoned rows —
+        this is what makes "removal unwatches on next sync" (F1 acceptance)
+        true without F3 keeping its own bookkeeping.
+        """
+        with self.session() as session:
+            statement = (
+                select(ArtistMatch.mbid)
+                .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
+                .where(
+                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                    ArtistMatch.mbid.is_not(None),  # type: ignore[union-attr]
+                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                )
+                .distinct()
+            )
+            return [mbid for mbid in session.exec(statement).all() if mbid is not None]
+
+    def list_release_groups(self, artist_mbid: str) -> list[ReleaseGroup]:
+        """All release-groups already recorded for one artist MBID."""
+        with self.session() as session:
+            statement = select(ReleaseGroup).where(ReleaseGroup.artist_mbid == artist_mbid)
+            return list(session.exec(statement).all())
+
+    def has_release_groups(self, artist_mbid: str) -> bool:
+        """Whether any release-group row exists for this artist (baseline test)."""
+        with self.session() as session:
+            statement = (
+                select(ReleaseGroup.id).where(ReleaseGroup.artist_mbid == artist_mbid).limit(1)
+            )
+            return session.exec(statement).first() is not None
+
+    def add_release_group(
+        self,
+        artist_mbid: str,
+        mbid: str,
+        title: str,
+        primary_type: str | None,
+        secondary_types: Sequence[str],
+        first_release_date: str,
+    ) -> ReleaseGroup:
+        """Record a newly seen release-group."""
+        row = ReleaseGroup(
+            artist_mbid=artist_mbid,
+            mbid=mbid,
+            title=title,
+            primary_type=primary_type,
+            secondary_types_json=json.dumps(list(secondary_types)) if secondary_types else None,
+            first_release_date=first_release_date,
+        )
+        with self.session() as session:
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def update_release_group_date(self, mbid: str, first_release_date: str) -> ReleaseGroup:
+        """Record a revised first-release date on an already-seen group.
+
+        Raises:
+            StorageError: no release-group row exists for ``mbid``.
+        """
+        with self.session() as session:
+            statement = select(ReleaseGroup).where(ReleaseGroup.mbid == mbid)
+            row = session.exec(statement).first()
+            if row is None:
+                # The offending MBID is deliberately not echoed — error strings
+                # end up in logs, and MBIDs are taste data (dpia.md §4).
+                raise StorageError("no release-group row exists for that MBID")
+            row.first_release_date = first_release_date
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def add_event(self, release_group_id: int, kind: str) -> ReleaseEvent:
+        """Append one release event (F4/F5 consume these; ``notified_at`` NULL).
+
+        Raises:
+            StorageError: ``kind`` is not one of `encore.models.RELEASE_EVENT_KINDS`.
+        """
+        if kind not in RELEASE_EVENT_KINDS:
+            raise StorageError(f"invalid event kind {kind!r}; expected {RELEASE_EVENT_KINDS}")
+        event_row = ReleaseEvent(release_group_id=release_group_id, kind=kind)
+        with self.session() as session:
+            session.add(event_row)
+            session.commit()
+            session.refresh(event_row)
+        return event_row
+
+    def list_events(self, kind: str | None = None) -> list[ReleaseEvent]:
+        """Release events, oldest first, optionally filtered by kind."""
+        with self.session() as session:
+            statement = select(ReleaseEvent).order_by(ReleaseEvent.created_at)  # type: ignore[arg-type]
+            if kind is not None:
+                statement = statement.where(ReleaseEvent.kind == kind)
+            return list(session.exec(statement).all())
+
+    def set_plex_machine_identifier(self, machine_identifier: str) -> None:
+        """Record the Plex server's machine identifier (for F4 deep links)."""
+        with self.session() as session:
+            settings = self.get_settings(session)
+            settings.plex_machine_identifier = machine_identifier
+            settings.updated_at = utcnow()
+            session.add(settings)
+            session.commit()
+
+    def get_plex_machine_identifier(self) -> str | None:
+        """Return the stored Plex machine identifier (``None`` before the first sync)."""
+        with self.session() as session:
+            return self.get_settings(session).plex_machine_identifier
+
+    # -- notification channels (F4) -------------------------------------------
+
+    def add_channel(
+        self,
+        name: str,
+        url: str,
+        mode: str = "instant",
+        digest_interval_hours: float = 24.0,
+    ) -> NotificationChannel:
+        """Create a channel; the Apprise URL is encrypted at rest (docs/adr/0008).
+
+        Raises:
+            StorageError: ``mode`` is not one of `encore.models.CHANNEL_MODES`,
+                ``digest_interval_hours`` is not positive, or ``name`` is taken.
+        """
+        if mode not in CHANNEL_MODES:
+            raise StorageError(f"invalid channel mode {mode!r}; expected {CHANNEL_MODES}")
+        if digest_interval_hours <= 0:
+            raise StorageError("digest interval must be a positive number of hours")
+        row = NotificationChannel(
+            name=name,
+            url_cipher=self.cipher.encrypt(url),
+            mode=mode,
+            digest_interval_hours=digest_interval_hours,
+        )
+        with self.session() as session:
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
+                raise StorageError(f"a notification channel named {name!r} already exists") from exc
+            session.refresh(row)
+        return row
+
+    def list_channels(self, enabled_only: bool = False) -> list[NotificationChannel]:
+        """Return channels in creation order; optionally only the enabled ones."""
+        with self.session() as session:
+            statement = select(NotificationChannel).order_by(col(NotificationChannel.created_at))
+            if enabled_only:
+                statement = statement.where(NotificationChannel.enabled)
+            return list(session.exec(statement).all())
+
+    def get_channel(self, name: str) -> NotificationChannel | None:
+        """Return one channel by name, or ``None``."""
+        with self.session() as session:
+            statement = select(NotificationChannel).where(NotificationChannel.name == name)
+            return session.exec(statement).first()
+
+    def channel_url(self, channel: NotificationChannel) -> str:
+        """Decrypt a channel's Apprise URL — the only place it exists in plaintext.
+
+        Callers must treat the result as a credential: never log it, never
+        print it, never include it in an error message.
+
+        Raises:
+            SecretDecryptionError: the key file does not match the ciphertext.
+        """
+        return self.cipher.decrypt(channel.url_cipher)
+
+    def set_channel_enabled(self, name: str, enabled: bool) -> NotificationChannel:
+        """Enable or disable a channel without deleting its history.
+
+        Raises:
+            StorageError: no channel with that name exists.
+        """
+        with self.session() as session:
+            row = self._require_channel(session, name)
+            row.enabled = enabled
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def remove_channel(self, name: str) -> None:
+        """Delete a channel and the delivery rows that fanned out to it.
+
+        Raises:
+            StorageError: no channel with that name exists.
+        """
+        with self.session() as session:
+            row = self._require_channel(session, name)
+            for delivery in session.exec(
+                select(Delivery).where(Delivery.channel_id == row.id)
+            ).all():
+                session.delete(delivery)
+            session.delete(row)
+            session.commit()
+
+    @staticmethod
+    def _require_channel(session: Session, name: str) -> NotificationChannel:
+        """Fetch a channel by name inside an open session, or raise."""
+        statement = select(NotificationChannel).where(NotificationChannel.name == name)
+        row = session.exec(statement).first()
+        if row is None:
+            raise StorageError(f"no notification channel named {name!r}")
+        return row
+
+    def record_channel_result(
+        self,
+        channel_id: int,
+        success: bool,
+        error: str | None = None,
+        digest_sent_at: datetime | None = None,
+    ) -> None:
+        """Update a channel's health after an attempt (F4's "surface it" half)."""
+        now = utcnow()
+        with self.session() as session:
+            row = session.get(NotificationChannel, channel_id)
+            if row is None:  # pragma: no cover - the channel was removed mid-cycle
+                return
+            if success:
+                row.last_success_at = now
+                row.consecutive_failures = 0
+                row.last_error = None
+            else:
+                row.last_failure_at = now
+                row.consecutive_failures += 1
+                row.last_error = error
+            if digest_sent_at is not None:
+                row.last_digest_at = digest_sent_at
+            row.updated_at = now
+            session.add(row)
+            session.commit()
+
+    # -- delivery queue (F4) ---------------------------------------------------
+
+    def ensure_deliveries(self, now: datetime | None = None) -> int:
+        """Materialize missing (event, channel) delivery rows; return how many.
+
+        Only events created *after* a channel was added fan out to it. Adding
+        a channel therefore never replays history — the same
+        don't-flood-on-first-contact rule the F3 baseline applies to a newly
+        watched artist (docs/adr/0011), applied to a newly added channel.
+
+        ``now`` stamps ``next_attempt_at`` so a row created during a cycle is
+        due *in* that cycle; without it a brand-new delivery would be a few
+        microseconds in the future and wait a whole interval for nothing.
+        """
+        if now is None:
+            now = utcnow()
+        created = 0
+        with self.session() as session:
+            channels = session.exec(
+                select(NotificationChannel).where(NotificationChannel.enabled)
+            ).all()
+            if not channels:
+                return 0
+            events = session.exec(
+                select(ReleaseEvent).where(col(ReleaseEvent.notified_at).is_(None))
+            ).all()
+            if not events:
+                return 0
+            event_ids = [event.id for event in events if event.id is not None]
+            existing = {
+                (delivery.event_id, delivery.channel_id)
+                for delivery in session.exec(
+                    select(Delivery).where(col(Delivery.event_id).in_(event_ids))
+                ).all()
+            }
+            for event in events:
+                if event.id is None:  # pragma: no cover - persisted rows always have one
+                    continue
+                for channel in channels:
+                    if channel.id is None:  # pragma: no cover - same
+                        continue
+                    if event.created_at < channel.created_at:
+                        continue
+                    if (event.id, channel.id) in existing:
+                        continue
+                    session.add(
+                        Delivery(event_id=event.id, channel_id=channel.id, next_attempt_at=now)
+                    )
+                    created += 1
+            session.commit()
+        return created
+
+    def due_deliveries(self, channel_id: int, now: datetime) -> list[Delivery]:
+        """Return pending deliveries for one channel whose backoff has elapsed."""
+        with self.session() as session:
+            statement = (
+                select(Delivery)
+                .where(
+                    Delivery.channel_id == channel_id,
+                    Delivery.status == "pending",
+                    col(Delivery.next_attempt_at) <= now,
+                )
+                .order_by(col(Delivery.created_at))
+            )
+            return list(session.exec(statement).all())
+
+    def update_delivery(
+        self,
+        delivery_id: int,
+        status: str,
+        attempts: int,
+        next_attempt_at: datetime | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        """Write one delivery's outcome back (status, attempt count, backoff).
+
+        Raises:
+            StorageError: ``status`` is not one of
+                `encore.models.DELIVERY_STATUSES`.
+        """
+        if status not in DELIVERY_STATUSES:
+            raise StorageError(f"invalid delivery status {status!r}; expected {DELIVERY_STATUSES}")
+        with self.session() as session:
+            row = session.get(Delivery, delivery_id)
+            if row is None:  # pragma: no cover - the delivery was removed mid-cycle
+                return
+            row.status = status
+            row.attempts = attempts
+            row.last_error = last_error
+            if next_attempt_at is not None:
+                row.next_attempt_at = next_attempt_at
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+
+    def settle_events(self, event_ids: Sequence[int]) -> int:
+        """Stamp ``notified_at`` on events with no pending deliveries left.
+
+        "Settled" means encore is done trying, not that every channel
+        succeeded — a channel that exhausted its retries is terminal too, and
+        its failure is recorded on the channel row, not hidden in the event.
+        """
+        settled = 0
+        now = utcnow()
+        with self.session() as session:
+            for event_id in dict.fromkeys(event_ids):
+                deliveries = session.exec(
+                    select(Delivery).where(Delivery.event_id == event_id)
+                ).all()
+                if not deliveries or any(row.status == "pending" for row in deliveries):
+                    continue
+                event = session.get(ReleaseEvent, event_id)
+                if event is None or event.notified_at is not None:
+                    continue
+                event.notified_at = now
+                session.add(event)
+                settled += 1
+            session.commit()
+        return settled
+
+    # -- standing feeds (F5) ---------------------------------------------------
+
+    def get_feed_token(self) -> str | None:
+        """Return the feed token, or ``None`` if none has been minted yet.
+
+        Callers must treat the result as a credential: it is the entire
+        access control on the F5 feed routes, so it is never logged and only
+        printed by the CLI surface whose job is handing it to the user.
+
+        Raises:
+            SecretDecryptionError: the key file does not match the ciphertext.
+        """
+        with self.session() as session:
+            settings = self.get_settings(session)
+            if settings.feed_token_cipher is None:
+                return None
+            return self.cipher.decrypt(settings.feed_token_cipher)
+
+    def ensure_feed_token(self) -> str:
+        """Return the feed token, minting one on first use (encrypted at rest)."""
+        existing = self.get_feed_token()
+        if existing is not None:
+            return existing
+        return self.rotate_feed_token()
+
+    def rotate_feed_token(self) -> str:
+        """Replace the feed token with a fresh one — every old feed URL dies now.
+
+        This is the revocation story the audits promise (residual-risk RR-06):
+        a feed URL pasted somewhere regrettable stops working the moment the
+        operator rotates. Revocation is all-or-nothing by design — one token
+        gates both feeds and every subscriber (RR-07, docs/adr/0013).
+        """
+        token = secrets.token_urlsafe(32)
+        with self.session() as session:
+            settings = self.get_settings(session)
+            settings.feed_token_cipher = self.cipher.encrypt(token)
+            settings.updated_at = utcnow()
+            session.add(settings)
+            session.commit()
+        return token
+
+    def list_upcoming_releases(self, today: date | None = None) -> list[UpcomingReleaseView]:
+        """Announced releases from today forward, for the iCal feed (F5).
+
+        Only **day-precision** dates qualify: a bare ``2027`` or ``2027-03``
+        announcement cannot become a calendar entry without inventing a day
+        MusicBrainz did not publish (the same no-invented-precision rule the
+        F4 renderer follows), so partial dates stay in the RSS feed only.
+        Scope matches the watch list: matched artists still present in Plex —
+        an unwatched artist's stored announcements drop off the calendar.
+        Full ISO dates compare correctly as text, so the cut-off is SQL;
+        rows are ordered by date then title.
+        """
+        if today is None:
+            today = utcnow().date()
+        with self.session() as session:
+            statement = (
+                select(ReleaseGroup, ArtistMatch)
+                .join(
+                    ArtistMatch,
+                    ArtistMatch.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
+                )
+                .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
+                .where(
+                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                    func.length(ReleaseGroup.first_release_date) == 10,
+                    ReleaseGroup.first_release_date >= today.isoformat(),
+                )
+                .order_by(col(ReleaseGroup.first_release_date), col(ReleaseGroup.title))
+            )
+            views: list[UpcomingReleaseView] = []
+            seen_mbids: set[str] = set()
+            for group, match in session.exec(statement).all():
+                if group.mbid in seen_mbids:
+                    # Two Plex rows matched to one MBID (e.g. a duplicate
+                    # library entry) must not duplicate the calendar entry.
+                    continue
+                seen_mbids.add(group.mbid)
+                try:
+                    date.fromisoformat(group.first_release_date)
+                except ValueError:  # pragma: no cover - MB dates are ISO; belt and braces
+                    continue
+                secondary = (
+                    tuple(json.loads(group.secondary_types_json))
+                    if group.secondary_types_json
+                    else ()
+                )
+                views.append(
+                    UpcomingReleaseView(
+                        release_group_mbid=group.mbid,
+                        title=group.title,
+                        primary_type=group.primary_type,
+                        secondary_types=secondary,
+                        first_release_date=group.first_release_date,
+                        artist_mbid=group.artist_mbid,
+                        artist_name=match.artist_name,
+                    )
+                )
+            return views
+
+    # -- the read model shared by notifications, the in-app feed, and F5 -------
+
+    def list_event_views(self, limit: int = 50) -> list[EventView]:
+        """Return the newest events joined to release-group and artist display data."""
+        with self.session() as session:
+            events = session.exec(
+                select(ReleaseEvent).order_by(col(ReleaseEvent.created_at).desc()).limit(limit)
+            ).all()
+            return self._build_event_views(session, list(events))
+
+    def event_views_for(self, event_ids: Sequence[int]) -> dict[int, EventView]:
+        """Return read models for specific event ids, keyed by id."""
+        ids = list(dict.fromkeys(event_ids))
+        if not ids:
+            return {}
+        with self.session() as session:
+            events = session.exec(select(ReleaseEvent).where(col(ReleaseEvent.id).in_(ids))).all()
+            views = self._build_event_views(session, list(events))
+        return {view.event_id: view for view in views}
+
+    @staticmethod
+    def _build_event_views(session: Session, events: Sequence[ReleaseEvent]) -> list[EventView]:
+        """Assemble `EventView` rows with three bounded lookups, no ORM joins."""
+        if not events:
+            return []
+        group_ids = {event.release_group_id for event in events}
+        groups = {
+            group.id: group
+            for group in session.exec(
+                select(ReleaseGroup).where(col(ReleaseGroup.id).in_(group_ids))
+            ).all()
+        }
+        artist_mbids = {group.artist_mbid for group in groups.values()}
+        matches = {
+            match.mbid: match
+            for match in session.exec(
+                select(ArtistMatch).where(col(ArtistMatch.mbid).in_(artist_mbids))
+            ).all()
+            if match.mbid is not None
+        }
+        views: list[EventView] = []
+        for row in events:
+            group = groups.get(row.release_group_id)
+            if group is None or row.id is None:  # pragma: no cover - FK guarantees the group
+                continue
+            match = matches.get(group.artist_mbid)
+            secondary = (
+                tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
+            )
+            views.append(
+                EventView(
+                    event_id=row.id,
+                    kind=row.kind,
+                    created_at=row.created_at,
+                    release_group_mbid=group.mbid,
+                    title=group.title,
+                    primary_type=group.primary_type,
+                    secondary_types=secondary,
+                    first_release_date=group.first_release_date,
+                    artist_mbid=group.artist_mbid,
+                    artist_name=match.artist_name if match is not None else "",
+                    plex_rating_key=match.artist_key if match is not None else None,
+                )
+            )
+        return views
