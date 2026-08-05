@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import select
 
-from encore.models import ArtistMatch
+from encore.models import Artist, ArtistMatch
 from encore.storage import MIGRATIONS, Storage, StorageError
 
 
@@ -87,6 +87,60 @@ def test_resolve_and_skip_transitions(tmp_path: Path) -> None:
         storage.resolve_artist_match("key-missing", "mb-x")
     with pytest.raises(StorageError, match="no artist match row"):
         storage.skip_artist_match("key-missing")
+
+
+def _add_artist(storage: Storage, key: str, name: str, *, removed: bool = False) -> None:
+    """Insert one Artist row directly (bypassing the Plex sync pipeline)."""
+    with storage.session() as session:
+        session.add(
+            Artist(
+                plex_rating_key=key,
+                name=name,
+                library_key="1",
+                removed_at=datetime(2026, 1, 1, tzinfo=UTC) if removed else None,
+            )
+        )
+        session.commit()
+
+
+def test_list_unmatched_artists_excludes_matched_tombstoned_and_any_status(
+    tmp_path: Path,
+) -> None:
+    storage = Storage(tmp_path)
+    _add_artist(storage, "key-new", "New Artist")
+    _add_artist(storage, "key-auto", "Auto Matched")
+    _add_artist(storage, "key-pending", "Pending Review")
+    _add_artist(storage, "key-skipped", "Deliberately Skipped")
+    _add_artist(storage, "key-gone", "Removed From Plex", removed=True)
+    # Every non-"unmatched" status must be excluded, not just "auto".
+    storage.save_artist_match("key-auto", "Auto Matched", "auto", mbid="mb-auto")
+    storage.save_artist_match("key-pending", "Pending Review", "pending")
+    storage.save_artist_match("key-skipped", "Deliberately Skipped", "skipped")
+
+    unmatched = storage.list_unmatched_artists()
+
+    assert [artist.plex_rating_key for artist in unmatched] == ["key-new"]
+    storage.close()
+
+
+def test_list_unmatched_artists_orders_oldest_first(tmp_path: Path) -> None:
+    storage = Storage(tmp_path)
+    _add_artist(storage, "key-b", "B")
+    _add_artist(storage, "key-a", "A")
+    with storage.session() as session:
+        for row in session.exec(select(Artist)).all():
+            row.first_seen_at = (
+                datetime(2026, 1, 1, tzinfo=UTC)
+                if row.plex_rating_key == "key-a"
+                else datetime(2026, 6, 1, tzinfo=UTC)
+            )
+            session.add(row)
+        session.commit()
+
+    unmatched = storage.list_unmatched_artists()
+
+    assert [artist.plex_rating_key for artist in unmatched] == ["key-a", "key-b"]
+    storage.close()
     storage.close()
 
 
