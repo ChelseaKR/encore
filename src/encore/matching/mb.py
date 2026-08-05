@@ -1,11 +1,12 @@
-"""Minimal MusicBrainz WS/2 artist-search client (F2 — docs/adr/0003).
+"""Minimal MusicBrainz WS/2 client: artist search (F2) + release-group browse (F3).
 
 MetaBrainz politeness is architecture, not etiquette (roadmap risk R8): every
 request goes through a process-global rate limiter (default one request per
 second — the documented MusicBrainz budget), carries a descriptive
 ``User-Agent``, and honors ``Retry-After`` on 429/503 with a bounded number
-of retries. F3's release-group poller must reuse `MB_RATE_LIMITER` so the
-whole process shares one budget.
+of retries. The F3 release-group poller reuses `MB_RATE_LIMITER` (it shares
+this client), so the whole process shares one budget — no per-job limiters
+that can sum past 1 req/s (encore-plans/04 §API budget).
 
 Privacy (no-outing lens): artist names are taste data. This module never
 logs query text, artist names, or MBIDs — log lines carry only operational
@@ -32,6 +33,7 @@ __all__ = [
     "MusicBrainzClient",
     "MusicBrainzError",
     "RateLimiter",
+    "ReleaseGroupInfo",
 ]
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,11 @@ MB_BASE_URL = "https://musicbrainz.org/ws/2"
 USER_AGENT = f"encore/{__version__} (https://github.com/ChelseaKR/encore)"
 
 _MAX_ATTEMPTS = 3
+# Release-group browse pagination (F3): MB's maximum page size, and a
+# defensive cap on pages per artist so one discography can't monopolize the
+# shared 1 req/s budget (1,000 groups covers all but pathological artists).
+_BROWSE_PAGE_LIMIT = 100
+_MAX_BROWSE_PAGES = 10
 _MAX_RETRY_AFTER_SECONDS = 30.0
 _DEFAULT_BACKOFF_SECONDS = 2.0
 _REQUEST_TIMEOUT_SECONDS = 10.0
@@ -88,6 +95,21 @@ MB_RATE_LIMITER = RateLimiter()
 
 
 @dataclass(frozen=True)
+class ReleaseGroupInfo:
+    """One release-group row from a MusicBrainz browse response (F3).
+
+    ``first_release_date`` is MusicBrainz's partial date verbatim (``YYYY``,
+    ``YYYY-MM``, ``YYYY-MM-DD``, or ``""`` when MB has none).
+    """
+
+    mbid: str
+    title: str
+    primary_type: str | None = None
+    secondary_types: tuple[str, ...] = ()
+    first_release_date: str = ""
+
+
+@dataclass(frozen=True)
 class ArtistCandidate:
     """One artist row from a MusicBrainz search response."""
 
@@ -120,6 +142,31 @@ def _parse_aliases(raw: object) -> tuple[str, ...]:
         if isinstance(entry, dict) and isinstance(entry.get("name"), str):
             names.append(entry["name"])
     return tuple(names)
+
+
+def _parse_release_group(raw: object) -> ReleaseGroupInfo | None:
+    """Turn one raw release-group object into an info row, or ``None`` if malformed."""
+    if not isinstance(raw, dict):
+        return None
+    mbid = raw.get("id")
+    title = raw.get("title")
+    if not isinstance(mbid, str) or not isinstance(title, str):
+        return None
+    primary_type = raw.get("primary-type")
+    first_release_date = raw.get("first-release-date")
+    secondary_raw = raw.get("secondary-types")
+    secondary_types = (
+        tuple(entry for entry in secondary_raw if isinstance(entry, str))
+        if isinstance(secondary_raw, list)
+        else ()
+    )
+    return ReleaseGroupInfo(
+        mbid=mbid,
+        title=title,
+        primary_type=primary_type if isinstance(primary_type, str) else None,
+        secondary_types=secondary_types,
+        first_release_date=first_release_date if isinstance(first_release_date, str) else "",
+    )
 
 
 def _parse_candidate(raw: object) -> ArtistCandidate | None:
@@ -185,7 +232,7 @@ class MusicBrainzClient:
         """
         query = f'artist:"{escape_lucene(name)}"'
         params = {"query": query, "fmt": "json", "limit": str(limit)}
-        response = self._request_with_retries(params)
+        response = self._request_with_retries("/artist", params)
         payload: object = response.json()
         artists_raw: object = payload.get("artists", []) if isinstance(payload, dict) else []
         candidates = []
@@ -197,9 +244,56 @@ class MusicBrainzClient:
         logger.debug("MusicBrainz search returned %d candidate(s)", len(candidates))
         return candidates
 
-    def _request_with_retries(self, params: dict[str, str]) -> httpx.Response:
-        """GET ``/artist`` under the rate limiter, honoring ``Retry-After``."""
-        url = f"{self._base_url}/artist"
+    def browse_release_groups(self, artist_mbid: str) -> list[ReleaseGroupInfo]:
+        """Browse all release-groups credited to an artist MBID (F3).
+
+        Pages through WS/2 ``/release-group?artist=…`` under the shared rate
+        limiter. Pagination is capped at `_MAX_BROWSE_PAGES` pages of
+        `_BROWSE_PAGE_LIMIT` — a defensive bound so one pathologically large
+        discography cannot eat the whole process's MetaBrainz budget; the
+        truncation is logged (counts only) and the next poll resumes cheaply
+        because already-seen groups diff to nothing.
+
+        Raises:
+            MusicBrainzError: the API was unreachable or kept answering
+                429/503/5xx after the bounded retries.
+        """
+        groups: list[ReleaseGroupInfo] = []
+        offset = 0
+        for _page in range(_MAX_BROWSE_PAGES):
+            params = {
+                "artist": artist_mbid,
+                "fmt": "json",
+                "limit": str(_BROWSE_PAGE_LIMIT),
+                "offset": str(offset),
+            }
+            response = self._request_with_retries("/release-group", params)
+            payload: object = response.json()
+            if not isinstance(payload, dict):
+                break
+            raw_groups = payload.get("release-groups", [])
+            if not isinstance(raw_groups, list) or not raw_groups:
+                break
+            for raw in raw_groups:
+                parsed = _parse_release_group(raw)
+                if parsed is not None:
+                    groups.append(parsed)
+            offset += len(raw_groups)
+            total = payload.get("release-group-count")
+            if isinstance(total, int) and offset >= total:
+                break
+        else:
+            logger.warning(
+                "release-group browse truncated at %d entries (page cap %d)",
+                len(groups),
+                _MAX_BROWSE_PAGES,
+            )
+        logger.debug("MusicBrainz browse returned %d release-group(s)", len(groups))
+        return groups
+
+    def _request_with_retries(self, path: str, params: dict[str, str]) -> httpx.Response:
+        """GET a WS/2 path under the rate limiter, honoring ``Retry-After``."""
+        url = f"{self._base_url}{path}"
         last_status = 0
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             self._rate_limiter.wait()
@@ -222,7 +316,7 @@ class MusicBrainzClient:
                 self._sleep(delay)
                 continue
             break
-        raise MusicBrainzError(f"MusicBrainz search failed with HTTP {last_status} after retries")
+        raise MusicBrainzError(f"MusicBrainz request failed with HTTP {last_status} after retries")
 
 
 def _retry_after_seconds(response: httpx.Response) -> float:

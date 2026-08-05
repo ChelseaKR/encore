@@ -33,6 +33,42 @@ marker tests, which also pin that artist names/MBIDs never appear in log
 output (httpx request-URL logging is suppressed in the MB client for this
 reason). No *new* data class was added; the full regeneration against the
 real schema remains due at M1 exit.
+**F3 update (2026-07-31):** release watching now exists (`src/encore/watch/`,
+`release_groups` + `events` tables). The new data class is **derived taste
+data**: per matched artist, MusicBrainz release-group MBIDs, titles, types,
+and first-release dates, plus an event log (`new`/`upcoming`/`date_changed`)
+with a `notified_at` delivery cursor — all local-only, retained as a permanent
+diff baseline. No new *outbound* data class: the poll sends only artist MBIDs
+(already-disclosed identifiers from the F2 flow) to musicbrainz.org over the
+same rate-limited, descriptive-User-Agent channel, tied to the operator's IP
+exactly as already disclosed below. The event log records *releases* observed,
+never user behavior — it is not a listening/usage log. `no_outing` marker
+tests extend to this layer: artist names, MBIDs, and release titles never
+appear in log output at any level. The full regeneration against the real
+schema remains due at M1 exit.
+**F4 update (2026-08-01):** notification delivery now exists
+(`src/encore/notify/`, `channels` + `deliveries` tables) and it is the first
+feature that sends **taste data to a destination the user chose**, so it is the
+first real test of the no-outing lens rather than a design commitment about it.
+Three things changed in the inventory below. (1) Apprise channel URLs are held
+Fernet-encrypted under ADR-0008's scheme — they are credentials, and a raw-bytes
+test proves the plaintext never reaches the database file. (2) A `deliveries`
+queue holds per-channel attempt state; it contains ids, counts, and error
+strings, no taste data, and is **not yet pruned** — retention lands with F15 at
+M4. (3) The notification *content* — artist, release title, type, date, a Cover
+Art Archive URL, and a Plex deep link — leaves the host in readable form to
+whatever service the user configured. That is the feature working as designed,
+and it is disclosed as an egress rather than implied away: choosing a Discord
+webhook means choosing Discord as a reader of that feed. Two boundaries were
+drawn deliberately (`docs/adr/0012`): cover art travels as a **URL, not an
+attachment**, so encore's own host never contacts the Cover Art Archive; and the
+in-app event feed is a **CLI surface, not an HTTP route**, because encore has no
+authentication until F6 and an unauthenticated feed on a published container
+port is precisely the outing risk RR-04 names. `no_outing`/`no_secrets_in_logs`
+marker tests extend to this layer: neither the notification body nor the channel
+URL ever reaches a log line, and a third-party plugin's exception message is
+reduced to its type before it can echo a URL. The full regeneration against the
+real schema remains due at M1 exit.
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14
@@ -85,8 +121,13 @@ Encore does with that access rather than trying to avoid holding it.
 | Artist inventory (implemented with F1: name, Plex GUID, rating key, library key, seen/tombstone timestamps) | matching (F2) | SQLite | mirrors Plex; tombstoned on removal | Medium — taste data, inference-rich (see §4) | Artist names go to MusicBrainz as search queries at match time (F2, the disclosed MetaBrainz flow below); never play counts |
 | Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirrors Plex | Medium — taste data | Never shared — local weighting only |
 | MBID match table (`artist_matches`: name, MBID, confidence, status, candidates) | identity matching + review queue (F2); release watching (F3) | SQLite | permanent cache; manually re-matchable/skippable | Medium — artist names + candidate lists are taste data | Not shared; internal cache. Artist names go to MusicBrainz as search queries at match time (the disclosed MetaBrainz flow below) |
-| Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials | Whatever destination the user configured (their own Discord/ntfy/SMTP/etc.) |
-| Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste | Whoever the user shares the feed URL with (their choice) |
+| Release-group + event tables (implemented with F3: MBIDs, titles, types, first-release dates, event kinds, delivery cursor) | release watching diff baseline (F3); delivery queue (F4/F5) | SQLite | permanent diff baseline | Medium — derived taste data (what the user's artists release, not what the user plays) | Not shared; artist MBIDs go to MusicBrainz in browse queries at poll time (the same disclosed MetaBrainz flow) |
+| Notification channel URLs (Apprise) — **implemented with F4** | delivery (F4) | SQLite, Fernet-encrypted at rest (`docs/adr/0008`, `docs/adr/0012`) | until user removes | **High** — many Apprise URLs embed credentials | Whatever destination the user configured (their own Discord/ntfy/SMTP/etc.) |
+| Delivery queue (`deliveries`, implemented with F4: event/channel ids, attempt counts, backoff timestamps, last error) | per-channel retry state so a failure is visible instead of silent (F4) | SQLite | not yet pruned — retention lands with the F15 export/wipe work at M4 | Low on its own (ids and counts), but it links an event to a destination | Nobody. Never leaves the host. |
+| **Notification *content*** (artist, release title, type, date, cover-art URL, Plex deep link) — implemented with F4 | the notification itself | transient; not stored beyond the tables above | n/a | Medium-High — this is the taste feed leaving the host in readable form | **The destination the user chose, and its operator.** A Discord webhook means Discord; an SMTP relay means that mail provider. This is the F4 egress, disclosed rather than implied away — and it is exactly the flow the no-outing lens in §4 governs: the user picks a destination, so the user picks who can read their taste |
+| Cover-art URLs (Cover Art Archive) — implemented with F4 | show the album art in the notification | constructed on the fly from the release-group MBID; not stored | n/a | Low-Medium — the URL contains a release-group MBID | **Not fetched by encore.** The URL travels inside the notification body, so any fetch is done by the notification service or the reader's client, revealing a release MBID to the Cover Art Archive at that point. Attaching the image instead — which would make encore's host fetch every cover — was rejected in `docs/adr/0012` |
+| Feed tokens (RSS/iCal) — **implemented with F5** | authenticate the standing feeds; the URL *is* the capability (`docs/adr/0013`) | SQLite, Fernet-encrypted at rest (`docs/adr/0008`) | minted lazily on first `encore feeds show`; rotatable at will, which revokes every URL already shared | **High** — the token is a bearer credential for the whole taste feed | Nobody by encore. The user hands the URL to the readers they choose; the token also reaches their own access logs and any reverse proxy they run |
+| **Feed *content*** (the same artist/title/type/date/cover-art/Plex-deep-link fields as a notification) — implemented with F5 | the RSS and iCal documents themselves | transient; rendered per request from the tables above | n/a | Medium-High — the taste feed leaving the host in readable form | **Whoever holds the feed URL**, plus their feed reader or calendar provider. A cloud reader (Feedly, Google Calendar) becomes a reader of the feed; a self-hosted one does not. Same disclosure shape as the F4 notification-content row, with subscription rather than push |
 | Optional ListenBrainz username (F11, not yet built) | account linking | SQLite | until unlinked | Medium | ListenBrainz (by definition of linking an account there) |
 
 **Not collected, ever:** telemetry, analytics, crash reports to third parties,

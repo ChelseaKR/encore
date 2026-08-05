@@ -1,0 +1,23 @@
+# SLO declaration — Observability Standard §4 schema (OBS-14).
+# Tier A (running self-hosted service). Companion to `encore.yaml`: that one
+# asks "did we look?", this one asks "did the answer reach the user?" — the two
+# halves of the product promise ("point it at Plex, get alerts").
+#
+# Recorded with F4 (2026-08-01) rather than after it, so the commitment predates
+# the metrics surface. Not yet enforced by an alert: encore emits no metrics
+# endpoint until the M2 routes land, so the query below is a documented
+# placeholder shape, exactly as `encore.yaml`'s is. The *behaviour* it measures
+# is already implemented and unit-tested (bounded retry with exponential
+# backoff, per-channel failure isolation, channel health surfaced in
+# `encore channels list`) — see docs/adr/0012.
+name: encore-notification-delivery
+sli_query: |
+  # Fraction of release events that reached a terminal DELIVERED state on at
+  # least one enabled channel within one hour of being recorded. "Terminal
+  # failed" counts against the budget: from the user's side, an alert that
+  # exhausted its retries and an alert that was never attempted are the same
+  # missing alert. Placeholder query shape; wired to real metrics at M2.
+  sum(rate(encore_deliveries_total{status="delivered"}[28d])) / sum(rate(encore_deliveries_total[28d]))
+target_percentage: 99.0
+window_days: 28
+error_budget_policy: pause-new-notification-features-on-50pct-burn

@@ -82,7 +82,7 @@ rather than discovering it after a leak. Source planning material:
 | Play counts (not yet collected — F9) | weighting (F9) | SQLite | mirror of Plex | Medium — taste data |
 | MBID match table (`artist_matches`, implemented 2026-07-17) | identity matching + review queue (F2); release watching (F3) | SQLite | permanent cache; manually re-matchable/skippable | Medium — artist names + candidate lists are taste data |
 | Notification channel URLs (Apprise) | delivery (F4) | SQLite, encrypted at rest | until user removes | **High** — many Apprise URLs embed credentials |
-| Feed tokens (RSS/iCal) | F5 auth | SQLite | rotatable | Medium — feed contents reveal taste |
+| Feed tokens (RSS/iCal, implemented with F5 2026-08-04) | authenticate the standing feeds — the URL is the capability (`docs/adr/0013`) | SQLite, encrypted at rest | minted on first use; rotatable, which revokes every shared URL | **High** — a bearer credential for the whole taste feed |
 | Optional ListenBrainz username (F11, not yet built) | account linking | SQLite | until unlinked | Medium |
 
 Not collected, ever: telemetry, analytics, crash reports to third parties, accounts,

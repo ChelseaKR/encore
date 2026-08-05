@@ -196,3 +196,15 @@ def test_no_music_libraries_raises(tmp_path: Path) -> None:
     with pytest.raises(SyncError, match="no music libraries"):
         sync_artists(storage, client)
     storage.close()
+
+
+def test_sync_records_the_plex_machine_identifier_for_deep_links(tmp_path: Path) -> None:
+    # F4's "open in Plex" line needs the server's machine identifier; the sync
+    # already holds a connection, so it is learned there rather than guessed.
+    storage = Storage(tmp_path)
+    assert storage.get_plex_machine_identifier() is None
+
+    sync_artists(storage, _client([FakeLibrary(key="1", title="Music", artists=[])]))
+
+    assert storage.get_plex_machine_identifier() == "fixture-machine-id"
+    storage.close()

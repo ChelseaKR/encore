@@ -137,6 +137,17 @@ class PlexMusicClient:
         """The Plex server base URL this client talks to."""
         return self._base_url
 
+    @property
+    def machine_identifier(self) -> str | None:
+        """Return the server's own public identifier, for Plex deep links (F4).
+
+        Read from the server root document plexapi already fetched at connect
+        time — no extra request, and a read either way. ``None`` when the
+        server did not report one, which only costs F4 its deep-link line.
+        """
+        value = getattr(self._server, "machineIdentifier", None)
+        return str(value) if value else None
+
     def music_libraries(self) -> list[PlexLibrary]:
         """Return the server's music (artist-typed) library sections."""
         sections = self._server.library.sections()

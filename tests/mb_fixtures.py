@@ -232,3 +232,33 @@ MATCH_CASES: tuple[MatchCase, ...] = (
         expected_mbid="mb-pink",
     ),
 )
+
+
+def mb_release_group(
+    mbid: str,
+    title: str,
+    primary_type: str | None = "Album",
+    secondary_types: tuple[str, ...] = (),
+    first_release_date: str = "",
+) -> dict[str, object]:
+    """One release-group object in MusicBrainz WS/2 browse-response shape (F3)."""
+    return {
+        "id": mbid,
+        "title": title,
+        "primary-type": primary_type,
+        "secondary-types": list(secondary_types),
+        "first-release-date": first_release_date,
+    }
+
+
+def mb_browse_response(
+    *groups: dict[str, object],
+    total: int | None = None,
+    offset: int = 0,
+) -> dict[str, object]:
+    """Build one WS/2 release-group browse payload page for the given groups (F3)."""
+    return {
+        "release-group-count": len(groups) if total is None else total,
+        "release-group-offset": offset,
+        "release-groups": list(groups),
+    }

@@ -33,6 +33,11 @@ jobs:
         language: [python, actions]
     permissions:
       contents: read
+      # CodeQL v4 calls GET /repos/{owner}/{repo}/actions/runs/{run_id}
+      # from `analyze`. On a private repo that call is denied without
+      # `actions: read` and the step fails with
+      # "Resource not accessible by integration".
+      actions: read
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -42,10 +47,10 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@f09c1c0a94de965c15400f5634aa42fac8fb8f88  # v3.28.19
+      - uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38  # v4.37.4
         with:
           languages: ${{ matrix.language }}
-      - uses: github/codeql-action/analyze@f09c1c0a94de965c15400f5634aa42fac8fb8f88  # v3.28.19
+      - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38  # v4.37.4
         with:
           category: "/language:${{ matrix.language }}"
           # No GHAS code scanning on this private repo — findings are checked in-run below.
