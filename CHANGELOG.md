@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`encore match` and `encore matches` close the F2 CLI gap.** The matching
+  engine (`MatchEngine`) and the review-queue storage methods have existed
+  since F2 landed, but nothing in the shipped CLI or scheduler ever called
+  them — the F2 CHANGELOG entry said so plainly ("nothing calls the engine
+  on a schedule until F1's sync loop integrates it"), and until now that
+  integration didn't exist anywhere, CLI included. A freshly synced library
+  had no path from `encore sync` to a populated `artist_matches` table, so
+  `encore watch` always saw zero watched artists. `encore match` runs one
+  on-demand matching pass over synced-but-unmatched artists (skip-don't-queue
+  on a per-artist MusicBrainz failure, same posture as `encore watch`);
+  `encore matches list` shows the review queue with its ranked candidates,
+  and `encore matches resolve`/`skip` decide them. A scheduled match job
+  (parity with sync/watch/notify) remains open — this closes the on-demand
+  path, not the automatic one.
+
 - **Release publication now has a trusted-main control plane.** A read-only
   verifier checks an existing SSH-signed stable tag, signer, main ancestry,
   package version, changelog, and the full gate. The exact verified commit

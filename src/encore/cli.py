@@ -1,12 +1,16 @@
-"""Console-script entry point: serve, sync, watch, notify, channels, events, feeds.
+"""Console-script entry point: serve, sync, match, watch, notify, channels, events, feeds.
 
 `encore serve` runs the app under uvicorn; `encore plex configure` stores
 Plex credentials (token prompted or piped, never a CLI argument — flags leak
 into shell history); `encore sync` is the on-demand library sync (F1);
-`encore watch` is the on-demand release-watch cycle (F3); `encore channels`
-manages Apprise notification destinations and `encore notify` runs one
-delivery cycle (F4); `encore feeds` mints and rotates the F5 feed URLs. The
-scheduled paths live in `encore.scheduler`.
+`encore match` runs the F2 matching engine over synced-but-unmatched artists
+and `encore matches` works the review queue it fills; `encore watch` is the
+on-demand release-watch cycle (F3); `encore channels` manages Apprise
+notification destinations and `encore notify` runs one delivery cycle (F4);
+`encore feeds` mints and rotates the F5 feed URLs. The scheduled paths live
+in `encore.scheduler` — matching has no scheduled job yet (CHANGELOG, F2):
+`encore match` is the only way a freshly synced artist reaches the watch
+cycle until that lands.
 
 `encore feeds show` is the one place the feed token is deliberately printed:
 the URL *is* the capability, and handing it to the operator is this command's
@@ -37,7 +41,9 @@ from collections.abc import Callable
 # mypy treats as private to this module.
 import uvicorn as uvicorn
 
-from encore.matching.mb import MusicBrainzClient
+from encore.matching.engine import MatchEngine, candidates_from_json
+from encore.matching.mb import MusicBrainzClient, MusicBrainzError
+from encore.matching.scoring import ArtistHints
 from encore.models import CHANNEL_MODES
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
@@ -71,6 +77,36 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="KEY",
         help="Music library key to sync (repeatable; default: stored selection, else all)",
+    )
+
+    match = subparsers.add_parser(
+        "match", help="Run one on-demand MusicBrainz identity-matching pass over new artists (F2)"
+    )
+    match.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+
+    matches = subparsers.add_parser("matches", help="Work the F2 identity-match review queue")
+    matches_sub = matches.add_subparsers(dest="matches_command", required=True)
+
+    matches_list = matches_sub.add_parser(
+        "list", help="Show artists awaiting a match decision, with ranked candidates"
+    )
+    matches_list.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+
+    matches_resolve = matches_sub.add_parser(
+        "resolve", help="Confirm an artist's MusicBrainz identity (a review decision or re-match)"
+    )
+    matches_resolve.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    matches_resolve.add_argument(
+        "--artist-key", required=True, help="The artist_key shown by `encore matches list`"
+    )
+    matches_resolve.add_argument("--mbid", required=True, help="The MusicBrainz artist ID to match")
+
+    matches_skip = matches_sub.add_parser(
+        "skip", help="Mark an artist deliberately unmatched (kept; not re-queried)"
+    )
+    matches_skip.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    matches_skip.add_argument(
+        "--artist-key", required=True, help="The artist_key shown by `encore matches list`"
     )
 
     watch = subparsers.add_parser(
@@ -237,6 +273,138 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         f"skipped_compilations={report.skipped_compilations}"
     )
     return 0
+
+
+def _cmd_match(args: argparse.Namespace) -> int:
+    """Run one on-demand matching pass over synced-but-unmatched artists (F2).
+
+    Skip-don't-queue, the same posture `encore watch` uses for MusicBrainz
+    (risk R8): one artist's failure is counted and the pass moves on rather
+    than wedging on it. No Plex-GUID hint is passed yet — the scoring
+    function accepts one (`ArtistHints.guid_mbid`) as a boost, never an
+    auto-accept, but nothing in this repo extracts an MBID out of a Plex
+    GUID yet, so a name-only match is the honest current behavior rather
+    than a silently-never-populated hint.
+    """
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    client = MusicBrainzClient()
+    try:
+        artists = storage.list_unmatched_artists()
+        if not artists:
+            print("No unmatched artists. Run `encore sync` first, or everything is matched.")
+            return 0
+        engine = MatchEngine(storage, client)
+        auto = pending = failed = 0
+        for artist in artists:
+            try:
+                row = engine.match_artist(artist.plex_rating_key, ArtistHints(name=artist.name))
+            except MusicBrainzError:
+                failed += 1
+                continue
+            if row.status == "auto":
+                auto += 1
+            else:
+                pending += 1
+    finally:
+        client.close()
+        storage.close()
+    print(
+        f"match complete: candidates={len(artists)} auto={auto} pending={pending} failed={failed}"
+    )
+    if pending:
+        print(f"{pending} artist(s) need a decision — run `encore matches list`.")
+    return 0
+
+
+def _format_candidate(candidate: dict[str, object]) -> str:
+    """Render one ranked candidate line for `encore matches list`."""
+    name = candidate.get("name", "?")
+    mbid = candidate.get("mbid", "?")
+    score = candidate.get("score")
+    score_text = f"{score:.2f}" if isinstance(score, int | float) else "?"
+    extras = ", ".join(
+        str(candidate[key]) for key in ("type", "country", "disambiguation") if candidate.get(key)
+    )
+    suffix = f" ({extras})" if extras else ""
+    return f"    {score_text}  {name}{suffix}  mbid={mbid}"
+
+
+def _cmd_matches_list(args: argparse.Namespace) -> int:
+    """Show every artist awaiting a review decision, with its ranked candidates."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        queue = storage.list_review_queue()
+    finally:
+        storage.close()
+    if not queue:
+        print("Review queue is empty. Run `encore match` to look for new artists.")
+        return 0
+    for row in queue:
+        print(f"{row.artist_name}  (artist_key={row.artist_key})")
+        for candidate in candidates_from_json(row.candidates_json)[:5]:
+            print(_format_candidate(candidate))
+        print(f"    resolve: encore matches resolve --artist-key {row.artist_key} --mbid <mbid>")
+        print(f"    skip:    encore matches skip --artist-key {row.artist_key}")
+    return 0
+
+
+def _cmd_matches_resolve(args: argparse.Namespace) -> int:
+    """Manually confirm one artist's MusicBrainz identity."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage.resolve_artist_match(args.artist_key, args.mbid)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    print(f"Resolved {args.artist_key!r} to {args.mbid}. Picked up on the next `encore watch`.")
+    return 0
+
+
+def _cmd_matches_skip(args: argparse.Namespace) -> int:
+    """Mark one artist deliberately unmatched."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage.skip_artist_match(args.artist_key)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    print(f"Skipped {args.artist_key!r}. It will not be re-matched or watched.")
+    return 0
+
+
+_MATCHES_COMMANDS = {
+    "list": _cmd_matches_list,
+    "resolve": _cmd_matches_resolve,
+    "skip": _cmd_matches_skip,
+}
+
+
+def _cmd_matches(args: argparse.Namespace) -> int:
+    """Dispatch an `encore matches …` subcommand."""
+    handler = _MATCHES_COMMANDS.get(args.matches_command)
+    if handler is None:  # pragma: no cover - argparse rejects unknown subcommands
+        return 1
+    return handler(args)
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
@@ -493,6 +661,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
     "sync": _cmd_sync,
+    "match": _cmd_match,
+    "matches": _cmd_matches,
     "watch": _cmd_watch,
     "notify": _cmd_notify,
     "events": _cmd_events,

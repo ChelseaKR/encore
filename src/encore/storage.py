@@ -397,6 +397,30 @@ class Storage:
             session.refresh(row)
         return row
 
+    def list_unmatched_artists(self) -> list[Artist]:
+        """Present (non-tombstoned) artists with no match decision yet.
+
+        The backlog `encore match` (F2) works through: every synced artist
+        that has never been through the matching engine, oldest-seen first,
+        so a fresh install's first match run has a stable order and the same
+        artist is never silently skipped. An artist that already has *any*
+        `ArtistMatch` row — auto, manual, pending, or skipped — is excluded;
+        re-matching a resolved or skipped decision is the explicit ``force``
+        path (`MatchEngine.match_artist`), never an implicit side effect of
+        this list.
+        """
+        with self.session() as session:
+            already_matched = select(ArtistMatch.artist_key)
+            statement = (
+                select(Artist)
+                .where(
+                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                    col(Artist.plex_rating_key).not_in(already_matched),
+                )
+                .order_by(Artist.first_seen_at)  # type: ignore[arg-type]
+            )
+            return list(session.exec(statement).all())
+
     # -- release watching (F3) -------------------------------------------------
 
     def list_watched_artist_mbids(self) -> list[str]:
