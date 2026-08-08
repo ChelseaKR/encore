@@ -178,6 +178,7 @@ jobs:
       - name: Recheck immutable tag object and publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.verify-at-tag.outputs.release_tag }}
           TAG_OBJECT_SHA: ${{ needs.verify-at-tag.outputs.tag_object_sha }}
         run: |
@@ -185,4 +186,4 @@ jobs:
           LIVE_TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq .object.sha)"
           test "${LIVE_TAG_OBJECT}" = "${TAG_OBJECT_SHA}"
           gh release create "${TAG}" dist/* \
-            --title "encore ${TAG}" --generate-notes --verify-tag
+            --title "encore ${TAG}" --generate-notes
