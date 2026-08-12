@@ -36,4 +36,21 @@ jobs:
         uses: trufflesecurity/trufflehog@00155c9dc586f34d189adc83d3ac2698c2ec551f  # v3.95.8
         with:
           path: ./
-          extra_args: --only-verified --fail
+          # Pinned. The action's `version` input defaults to "latest" and it runs
+          # `ghcr.io/trufflesecurity/trufflehog:${VERSION}`, so SHA-pinning the action
+          # above does not pin what actually scans. That is how this gate changed
+          # behaviour with no commit here: upstream published 3.96.0 and the next
+          # run picked it up.
+          version: "3.96.0"
+          # `--fail` is not passed. The action's own command already includes it
+          # and repeating a flag is a hard CLI error, so this scan exited 1 at
+          # startup having read nothing: no chunk count, no findings, no coverage.
+          # Lob is excluded because 3.96.0's Lob detector pattern,
+          # `\b((live|test)_[a-zA-Z0-9_]{35})\b`, matches any identifier starting
+          # `test_` with exactly 35 word characters after it, which is an ordinary
+          # pytest function name. Its verifier then POSTs to api.lob.com and reads the
+          # 403 as proof of a live key with no billing attached, so matches are
+          # promoted to verified. The first scan that actually ran here reported 9,
+          # every one a test name. There is no Lob integration in this repo. Same
+          # reasoning as gtfs-scorecard ADR 0044.
+          extra_args: --only-verified --exclude-detectors=Lob
