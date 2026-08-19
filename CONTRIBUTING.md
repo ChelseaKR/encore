@@ -50,7 +50,7 @@ make verify
 
 `make verify` runs **format-check + lint + type + test/coverage + security +
 todo-gate** — the exact same targets `ci.yml` and `release.yml` invoke, on the
-same pinned (`uv sync --frozen`) toolchain, so green locally means green in CI:
+same pinned (`uv sync --locked`) toolchain, so green locally means green in CI:
 there is no second, drifted reimplementation of the gate (CQ-09, CICD-27).
 
 | Gate | Command | What it checks |

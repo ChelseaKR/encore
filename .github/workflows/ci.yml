@@ -62,7 +62,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Install (uv sync --frozen — CQ-09)
+      - name: Install (uv sync --locked — CQ-09)
         run: make install
       - name: Stage 1-2 — format + lint
         run: make lint
@@ -105,7 +105,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Install (uv sync --frozen — CQ-09)
+      - name: Install (uv sync --locked — CQ-09)
         run: make install
       - name: Install gitleaks (pinned, matches .pre-commit-config.yaml)
         run: |

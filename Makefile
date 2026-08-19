@@ -10,7 +10,7 @@ help: ## Show this help
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 install: ## Sync the environment (uv, frozen lock, dev group — CQ-09/CQ-27)
-	uv sync --frozen --all-extras --group dev
+	uv sync --locked --all-extras --group dev
 
 lint: ## Static analysis (ruff): correctness, security, import hygiene, complexity
 	uv run ruff check src tests
