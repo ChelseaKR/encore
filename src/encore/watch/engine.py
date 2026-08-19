@@ -11,9 +11,10 @@ Semantics (docs/adr/0001 + docs/adr/0011):
 - **After baseline:** an unseen group becomes a ``new`` event (or ``upcoming``
   when future-dated); a changed first-release date on a seen group becomes a
   ``date_changed`` event.
-- **Skip, don't queue.** A per-artist MusicBrainz failure is counted and the
-  poll moves on — one bad artist (or a MetaBrainz outage mid-run) must not
-  wedge the whole cycle, and the next scheduled run retries naturally.
+- **Skip, don't queue.** A per-artist failure — MusicBrainz *or* storage —
+  is counted and the poll moves on: one bad artist (or a MetaBrainz outage
+  mid-run) must not wedge the whole cycle, and the next scheduled run
+  retries naturally.
 
 Privacy (no-outing lens): artist MBIDs, titles, and dates are taste data —
 log lines here carry only counts and kinds, never identifiers. The only
@@ -149,7 +150,7 @@ def watch_artist(
                 storage.add_event(_row_id(row.id), "new")
                 result.events_new += 1
         elif seen.first_release_date != info.first_release_date:
-            storage.update_release_group_date(info.mbid, info.first_release_date)
+            storage.update_release_group_date(artist_mbid, info.mbid, info.first_release_date)
             storage.add_event(_row_id(seen.id), "date_changed")
             result.events_date_changed += 1
     return result
@@ -167,8 +168,10 @@ def watch_all_artists(storage: Storage, client: MusicBrainzClient) -> WatchRepor
     for artist_mbid in storage.list_watched_artist_mbids():
         try:
             result = watch_artist(storage, client, artist_mbid)
-        except MusicBrainzError:
+        except (MusicBrainzError, StorageError):
             # Counts only — no MBID, no artist name (no-outing lens).
+            # StorageError gets the same skip: one artist's bad row must not
+            # kill the cycle for the other several hundred.
             report.artists_failed += 1
             continue
         report.add(result)

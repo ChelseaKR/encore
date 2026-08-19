@@ -171,6 +171,53 @@ def test_watched_mbids_join_excludes_tombstoned_pending_and_skipped(
     assert sorted(watched) == ["mb-manual", "mb-present"]
 
 
+def test_shared_release_group_tracks_per_artist(storage: Storage, httpx_mock: HTTPXMock) -> None:
+    # One release-group credited to two watched artists (a split single, a
+    # collab live EP — e.g. a live cover credited to both bands): the second
+    # artist's poll must record its own row instead of dying on a globally
+    # unique mbid. This is the real-world crash migration v7 exists for.
+    shared = mb_release_group("rg-shared", "Live Split", first_release_date="2023-11-02")
+    httpx_mock.add_response(url=_browse_url("mb-artist-1"), json=mb_browse_response(shared))
+    httpx_mock.add_response(url=_browse_url("mb-artist-2"), json=mb_browse_response(shared))
+
+    watch_artist(storage, _client(), "mb-artist-1", today=TODAY)
+    result = watch_artist(storage, _client(), "mb-artist-2", today=TODAY)
+
+    assert result.baselined is True
+    assert {row.mbid for row in storage.list_release_groups("mb-artist-1")} == {"rg-shared"}
+    assert {row.mbid for row in storage.list_release_groups("mb-artist-2")} == {"rg-shared"}
+
+
+def test_shared_new_group_after_baseline_alerts_each_artist(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    # Both artists are past baseline; a new group credited to both is news
+    # for each of them — one event per watched artist, on that artist's row.
+    for artist in ("mb-artist-1", "mb-artist-2"):
+        httpx_mock.add_response(
+            url=_browse_url(artist),
+            json=mb_browse_response(
+                mb_release_group(f"rg-{artist}", "Debut", first_release_date="1999-06-01")
+            ),
+        )
+        watch_artist(storage, _client(), artist, today=TODAY)
+    for artist in ("mb-artist-1", "mb-artist-2"):
+        httpx_mock.add_response(
+            url=_browse_url(artist),
+            json=mb_browse_response(
+                mb_release_group(f"rg-{artist}", "Debut", first_release_date="1999-06-01"),
+                mb_release_group("rg-collab", "Joint Single", first_release_date="2026-07-30"),
+            ),
+        )
+
+    results = [
+        watch_artist(storage, _client(), a, today=TODAY) for a in ("mb-artist-1", "mb-artist-2")
+    ]
+
+    assert [r.events_new for r in results] == [1, 1]
+    assert [event.kind for event in storage.list_events()] == ["new", "new"]
+
+
 def test_watch_all_skips_failed_artists_and_keeps_polling(
     storage: Storage, httpx_mock: HTTPXMock
 ) -> None:
@@ -192,6 +239,38 @@ def test_watch_all_skips_failed_artists_and_keeps_polling(
     assert report.artists_baselined == 1
     assert report.groups_seen == 1
     assert storage.list_release_groups("mb-healthy") != []
+
+
+def test_watch_all_skips_storage_failures_and_keeps_polling(
+    storage: Storage, httpx_mock: HTTPXMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Skip-don't-queue covers storage failures too: before v7's composite
+    # index, one shared release-group's IntegrityError killed the whole
+    # cycle. A StorageError from one artist must leave the rest polled.
+    _add_watched_artist(storage, "key-1", "Broken", "mb-broken")
+    _add_watched_artist(storage, "key-2", "Healthy", "mb-healthy")
+    for artist in ("mb-broken", "mb-healthy"):
+        httpx_mock.add_response(
+            url=_browse_url(artist),
+            json=mb_browse_response(
+                mb_release_group(f"rg-{artist}", "Debut", first_release_date="1999")
+            ),
+        )
+    original = storage.add_release_group
+
+    def failing(**kwargs: object) -> object:
+        if kwargs["artist_mbid"] == "mb-broken":
+            raise StorageError("synthetic storage failure")
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(storage, "add_release_group", failing)
+
+    report = watch_all_artists(storage, _client())
+
+    assert report.artists_failed == 1
+    assert report.artists_polled == 1
+    assert storage.list_release_groups("mb-healthy") != []
+    assert storage.list_release_groups("mb-broken") == []
 
 
 @pytest.mark.no_outing
@@ -221,7 +300,7 @@ def test_event_kind_validation_and_missing_row_errors(storage: Storage) -> None:
     with pytest.raises(StorageError, match="invalid event kind"):
         storage.add_event(1, "reissue")
     with pytest.raises(StorageError, match="no release-group row"):
-        storage.update_release_group_date("rg-none", "2026-01-01")
+        storage.update_release_group_date("mb-artist-1", "rg-none", "2026-01-01")
 
 
 def test_list_events_filters_by_kind(storage: Storage, httpx_mock: HTTPXMock) -> None:
