@@ -12,13 +12,16 @@ Deliberately conservative at M1:
   hammer the Plex server (the same skip-don't-queue posture F3 will apply
   to MusicBrainz).
 
-Three independent schedulers live here since F4: the Plex sync (F1, needs
-credentials), the MusicBrainz release watcher (F3, keyless — it polls
-whatever artists are matched, through the process-global MetaBrainz rate
-limiter in `encore.matching.mb`), and the notification delivery cycle (F4,
-minutes rather than hours, since its queue is local). All three share the
-conservative posture: first run one interval away, coalesce after downtime,
-never a backlog.
+Four independent schedulers live here since the match job landed: the Plex
+sync (F1, needs credentials), the MusicBrainz identity matcher (F2,
+keyless — it works the synced-but-unmatched backlog through the
+process-global MetaBrainz rate limiter in `encore.matching.mb`), the
+MusicBrainz release watcher (F3, keyless), and the notification delivery
+cycle (F4, minutes rather than hours, since its queue is local). All four
+share the conservative posture: first run one interval away, coalesce after
+downtime, never a backlog. The match and watch schedulers run the *same*
+passes as `encore match` / `encore watch` (`run_matching_pass` /
+`watch_all_artists`), so the manual and automatic paths cannot drift.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import os
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from encore.matching.engine import run_matching_pass
 from encore.matching.mb import MusicBrainzClient
 from encore.notify import run_delivery_cycle
 from encore.plex import PlexMusicClient
@@ -37,15 +41,19 @@ from encore.sync import SyncError, sync_artists
 from encore.watch import watch_all_artists
 
 __all__ = [
+    "DEFAULT_MATCH_INTERVAL_HOURS",
     "DEFAULT_NOTIFY_INTERVAL_MINUTES",
     "DEFAULT_SYNC_INTERVAL_HOURS",
     "DEFAULT_WATCH_INTERVAL_HOURS",
+    "MATCH_INTERVAL_ENV",
+    "MATCH_JOB_ID",
     "NOTIFY_INTERVAL_ENV",
     "NOTIFY_JOB_ID",
     "SYNC_INTERVAL_ENV",
     "SYNC_JOB_ID",
     "WATCH_INTERVAL_ENV",
     "WATCH_JOB_ID",
+    "build_match_scheduler",
     "build_notify_scheduler",
     "build_sync_scheduler",
     "build_watch_scheduler",
@@ -64,6 +72,14 @@ WATCH_JOB_ID = "mb-watch"
 NOTIFY_INTERVAL_ENV = "ENCORE_NOTIFY_INTERVAL_MINUTES"
 DEFAULT_NOTIFY_INTERVAL_MINUTES = 15.0
 NOTIFY_JOB_ID = "notify-deliver"
+
+# F2's scheduled twin of `encore match`: a freshly synced library reaches
+# the watch cycle without anyone remembering to run a command. Same daily
+# default as sync/watch — matching only queries for artists that have no
+# decision yet, so a steady-state install costs zero MusicBrainz requests.
+MATCH_INTERVAL_ENV = "ENCORE_MATCH_INTERVAL_HOURS"
+DEFAULT_MATCH_INTERVAL_HOURS = 24.0
+MATCH_JOB_ID = "mb-match"
 
 
 def _run_scheduled_sync(storage: Storage) -> None:
@@ -203,4 +219,50 @@ def build_notify_scheduler(storage: Storage) -> BackgroundScheduler | None:
     )
     scheduler.start()
     logger.info("notify scheduler started: every %s minutes", interval_minutes)
+    return scheduler
+
+
+def _run_scheduled_match(storage: Storage) -> None:
+    """One scheduled matching pass: fresh MB client, backlog, close (F2).
+
+    Runs the same `run_matching_pass` as `encore match`, so a freshly synced
+    artist reaches an identity decision — and then the watch cycle's next
+    poll list — without anyone remembering to run a command. A run with zero
+    unmatched artists is a free no-op: `Storage.list_unmatched_artists`
+    excludes every artist that already has a decision, so steady state costs
+    no MusicBrainz requests at all.
+    """
+    client = MusicBrainzClient()
+    try:
+        run_matching_pass(storage, client)
+    finally:
+        client.close()
+
+
+def build_match_scheduler(storage: Storage) -> BackgroundScheduler | None:
+    """Start the identity-matching scheduler (F2), or ``None`` when disabled.
+
+    No credential gate — MusicBrainz is keyless and the backlog is empty on
+    a fresh install — so the only ``None`` case is disabling via
+    ``$ENCORE_MATCH_INTERVAL_HOURS <= 0``. Same conservative posture as its
+    siblings: first run one interval away, ``coalesce`` collapses downtime
+    to one run, and per-artist failures are skipped inside the pass (risk
+    R8), retried naturally by the next cycle.
+    """
+    interval_hours = _configured_interval(MATCH_INTERVAL_ENV, DEFAULT_MATCH_INTERVAL_HOURS)
+    if interval_hours <= 0:
+        logger.info("match scheduler disabled (%s=%s)", MATCH_INTERVAL_ENV, interval_hours)
+        return None
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        _run_scheduled_match,
+        "interval",
+        args=[storage],
+        hours=interval_hours,
+        id=MATCH_JOB_ID,
+        coalesce=True,  # after downtime, run once — never queue a backlog
+        max_instances=1,
+    )
+    scheduler.start()
+    logger.info("match scheduler started: every %s hours", interval_hours)
     return scheduler

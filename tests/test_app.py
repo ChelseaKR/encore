@@ -27,8 +27,9 @@ def test_livez_ok_without_lifespan(tmp_path: Path) -> None:
 
 def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Fresh install: DB open, sync scheduler idle (no Plex credentials yet),
-    # watch scheduler running (keyless, starts by default).
+    # the keyless match/watch schedulers running, delivery running.
     monkeypatch.delenv("ENCORE_SYNC_INTERVAL_HOURS", raising=False)
+    monkeypatch.delenv("ENCORE_MATCH_INTERVAL_HOURS", raising=False)
     monkeypatch.delenv("ENCORE_WATCH_INTERVAL_HOURS", raising=False)
     monkeypatch.delenv("ENCORE_NOTIFY_INTERVAL_MINUTES", raising=False)
     with TestClient(create_app(tmp_path)) as client:
@@ -39,6 +40,7 @@ def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyP
         "checks": {
             "db": "ok",
             "sync_scheduler": "idle",
+            "match_scheduler": "ok",
             "watch_scheduler": "ok",
             "notify_scheduler": "ok",
         },

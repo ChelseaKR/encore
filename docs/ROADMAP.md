@@ -144,9 +144,9 @@ statute.
 — `../encore-plans/04-architecture.md` §deployment & operations). `/livez` and
 `/readyz` exist today (`src/encore/app.py`); `readyz` performs a real database
 probe since F0 (M1, 2026-07-11) and carries the scheduler-heartbeat check for
-all three schedulers since F3/F4 (sync, watch, notify — a started-then-dead
-scheduler is unready; a disabled or credential-gated one is idle, not a
-failure). Structured JSON logs with secret/PII redaction, RED metrics
+all four schedulers since the F2 match job landed (sync, match, watch,
+notify — a started-then-dead scheduler is unready; a disabled or
+credential-gated one is idle, not a failure). Structured JSON logs with secret/PII redaction, RED metrics
 per route, and `slos/encore.yaml` (poll-freshness SLO) are specified now and
 instantiated as the routes and pollers they measure land (M1–M2) — see
 `slos/encore.yaml` for the declared target, schema-validated on every `make verify`

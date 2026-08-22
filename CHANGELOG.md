@@ -31,6 +31,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A scheduled matching job closes the F2 automatic-path gap.** The F2
+  CLI entry above closed the on-demand path and said plainly that "a
+  scheduled match job (parity with sync/watch/notify) remains open." It is
+  open no longer. A fourth scheduler runs the same `run_matching_pass` as
+  `encore match` — one shared pass, so the manual and automatic paths
+  cannot drift — over the synced-but-unmatched backlog, daily by default
+  (`$ENCORE_MATCH_INTERVAL_HOURS`; `<= 0` disables). No credential gate
+  (MusicBrainz is keyless) and no steady-state cost: an artist with *any*
+  decision is excluded from the backlog, so a fully matched library costs
+  zero outbound requests, while an artist whose pass failed keeps no
+  decision and is retried — alone — by the next cycle. `/readyz` carries
+  the heartbeat check for all four schedulers.
 - Give the pre-UI Accessibility N/A state an explicit reason in the standards
   register so automated conformance does not accept an unexplained exemption.
 - **F5 standing feeds — RSS + iCal behind a capability URL (M2, 2026-08-04).**

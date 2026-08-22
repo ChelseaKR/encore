@@ -205,6 +205,70 @@ def test_scheduled_watch_builds_and_closes_its_own_mb_client(
     storage.close()
 
 
+def test_match_scheduler_stays_off_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    storage = Storage(tmp_path)
+    monkeypatch.setenv(scheduler.MATCH_INTERVAL_ENV, "0")
+    with caplog.at_level(logging.INFO):
+        assert scheduler.build_match_scheduler(storage) is None
+    assert "match scheduler disabled" in caplog.text
+    storage.close()
+
+
+def test_match_scheduler_starts_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No credential gate (MusicBrainz is keyless) and no backlog on a fresh
+    # install: the pass over zero unmatched artists costs no requests.
+    storage = Storage(tmp_path)
+    fake = FakeScheduler()
+    monkeypatch.setattr(scheduler, "BackgroundScheduler", lambda: fake)
+    monkeypatch.delenv(scheduler.MATCH_INTERVAL_ENV, raising=False)
+
+    result = scheduler.build_match_scheduler(storage)
+
+    assert result is fake
+    assert fake.started
+    assert len(fake.jobs) == 1
+    args, kwargs = fake.jobs[0]
+    assert args[:2] == (scheduler._run_scheduled_match, "interval")
+    assert kwargs == {
+        "args": [storage],
+        "hours": 24.0,
+        "id": scheduler.MATCH_JOB_ID,
+        "coalesce": True,  # skip-don't-queue after downtime (risk R8)
+        "max_instances": 1,
+    }
+    storage.close()
+
+
+def test_scheduled_match_builds_and_closes_its_own_mb_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = Storage(tmp_path)
+
+    class FakeMBClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_client = FakeMBClient()
+    passes: list[object] = []
+    monkeypatch.setattr(scheduler, "MusicBrainzClient", lambda: fake_client)
+    monkeypatch.setattr(
+        scheduler, "run_matching_pass", lambda _storage, client: passes.append(client)
+    )
+
+    scheduler._run_scheduled_match(storage)
+
+    assert passes == [fake_client]
+    assert fake_client.closed  # closed even though the pass ran fine
+    storage.close()
+
+
 def test_notify_scheduler_stays_off_when_disabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
