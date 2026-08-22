@@ -32,6 +32,7 @@ def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("ENCORE_MATCH_INTERVAL_HOURS", raising=False)
     monkeypatch.delenv("ENCORE_WATCH_INTERVAL_HOURS", raising=False)
     monkeypatch.delenv("ENCORE_NOTIFY_INTERVAL_MINUTES", raising=False)
+    monkeypatch.delenv("ENCORE_REC_INTERVAL_HOURS", raising=False)
     with TestClient(create_app(tmp_path)) as client:
         response = client.get("/readyz")
     assert response.status_code == 200
@@ -43,6 +44,7 @@ def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyP
             "match_scheduler": "ok",
             "watch_scheduler": "ok",
             "notify_scheduler": "ok",
+            "rec_scheduler": "ok",
         },
     }
 

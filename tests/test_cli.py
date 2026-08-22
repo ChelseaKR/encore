@@ -472,3 +472,79 @@ def test_artists_list_shows_plays_and_weights(
     assert cli.main(["artists", "list", "--data-dir", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "plays=42" in out and "listening-weight=1.00" in out
+
+
+# -- F7 recommendations ---------------------------------------------------------
+
+
+def test_recommend_and_recommendations_flow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from encore.recommend.engine import RecommendRefreshReport
+
+    def fake_refresh(storage: Storage, client: object, limit: int = 50) -> RecommendRefreshReport:
+        return RecommendRefreshReport(seeds=2, rows_received=10, candidates=5, stored=5)
+
+    class _StubClient:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(cli, "refresh_recommendations", fake_refresh)
+    monkeypatch.setattr(cli, "ListenBrainzClient", _StubClient)
+
+    assert cli.main(["recommend", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "seeds=2" in out and "stored=5" in out
+
+    def degraded(storage: Storage, client: object, limit: int = 50) -> RecommendRefreshReport:
+        report = RecommendRefreshReport(batches_failed=1)
+        report.seeds = 1
+        return report
+
+    monkeypatch.setattr(cli, "refresh_recommendations", degraded)
+    assert cli.main(["recommend", "--data-dir", str(tmp_path)]) == 0
+    assert "incomplete" in capsys.readouterr().out
+
+
+def test_recommendations_list_dismiss_and_promote(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json as _json
+
+    from encore.models import Recommendation
+
+    storage = Storage(tmp_path)
+    _seed_artist_for_cli(storage, "k1", "Low")
+    storage.save_artist_match("k1", "Low", "auto", mbid="mbid-low")
+    with storage.session() as session:
+        session.add(
+            Recommendation(
+                mbid="mbid-rec",
+                name="Candidate",
+                score=0.75,
+                provenance_json=_json.dumps(
+                    {"algorithm": "t", "sources": [{"mbid": "mbid-low", "contribution": 0.75}]}
+                ),
+                status="new",
+            )
+        )
+        session.commit()
+    storage.close()
+
+    assert cli.main(["recommendations", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Candidate" in out and "score=0.750" in out
+    assert "similar to Low" in out
+
+    assert (
+        cli.main(["recommendations", "dismiss", "--data-dir", str(tmp_path), "--mbid", "mbid-rec"])
+        == 0
+    )
+    # A dismissed candidate no longer lists among the new ones.
+    assert cli.main(["recommendations", "list", "--data-dir", str(tmp_path)]) == 0
+    assert "Candidate" not in capsys.readouterr().out
+
+    assert (
+        cli.main(["recommendations", "promote", "--data-dir", str(tmp_path), "--mbid", "missing"])
+        == 1
+    )

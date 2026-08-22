@@ -12,13 +12,12 @@ Deliberately conservative at M1:
   hammer the Plex server (the same skip-don't-queue posture F3 will apply
   to MusicBrainz).
 
-Four independent schedulers live here since the match job landed: the Plex
-sync (F1, needs credentials), the MusicBrainz identity matcher (F2,
-keyless — it works the synced-but-unmatched backlog through the
-process-global MetaBrainz rate limiter in `encore.matching.mb`), the
-MusicBrainz release watcher (F3, keyless), and the notification delivery
-cycle (F4, minutes rather than hours, since its queue is local). All four
-share the conservative posture: first run one interval away, coalesce after
+Five independent schedulers live here now: the Plex sync (F1, needs
+credentials), the MusicBrainz identity matcher (F2, keyless), the
+MusicBrainz release watcher (F3, keyless), the notification delivery
+cycle (F4, minutes rather than hours, since its queue is local), and the
+weekly recommendation refresh (F7, ListenBrainz labs). All five share the
+conservative posture: first run one interval away, coalesce after
 downtime, never a backlog. The match and watch schedulers run the *same*
 passes as `encore match` / `encore watch` (`run_matching_pass` /
 `watch_all_artists`), so the manual and automatic paths cannot drift.
@@ -35,6 +34,8 @@ from encore.matching.engine import run_matching_pass
 from encore.matching.mb import MusicBrainzClient
 from encore.notify import run_delivery_cycle
 from encore.plex import PlexMusicClient
+from encore.recommend.engine import refresh_recommendations
+from encore.recommend.lb import ListenBrainzClient
 from encore.secretstore import SecretDecryptionError
 from encore.storage import Storage
 from encore.sync import SyncError, sync_artists
@@ -43,18 +44,22 @@ from encore.watch import watch_all_artists
 __all__ = [
     "DEFAULT_MATCH_INTERVAL_HOURS",
     "DEFAULT_NOTIFY_INTERVAL_MINUTES",
+    "DEFAULT_REC_INTERVAL_HOURS",
     "DEFAULT_SYNC_INTERVAL_HOURS",
     "DEFAULT_WATCH_INTERVAL_HOURS",
     "MATCH_INTERVAL_ENV",
     "MATCH_JOB_ID",
     "NOTIFY_INTERVAL_ENV",
     "NOTIFY_JOB_ID",
+    "REC_INTERVAL_ENV",
+    "REC_JOB_ID",
     "SYNC_INTERVAL_ENV",
     "SYNC_JOB_ID",
     "WATCH_INTERVAL_ENV",
     "WATCH_JOB_ID",
     "build_match_scheduler",
     "build_notify_scheduler",
+    "build_rec_scheduler",
     "build_sync_scheduler",
     "build_watch_scheduler",
 ]
@@ -80,6 +85,13 @@ NOTIFY_JOB_ID = "notify-deliver"
 MATCH_INTERVAL_ENV = "ENCORE_MATCH_INTERVAL_HOURS"
 DEFAULT_MATCH_INTERVAL_HOURS = 24.0
 MATCH_JOB_ID = "mb-match"
+
+# F7's weekly recommendation refresh: ListenBrainz labs is a slow-moving,
+# donation-funded dataset and similarity barely changes day to day. A
+# refresh with zero watched artists is a free no-op.
+REC_INTERVAL_ENV = "ENCORE_REC_INTERVAL_HOURS"
+DEFAULT_REC_INTERVAL_HOURS = 168.0
+REC_JOB_ID = "lb-recommend"
 
 
 def _run_scheduled_sync(storage: Storage) -> None:
@@ -265,4 +277,41 @@ def build_match_scheduler(storage: Storage) -> BackgroundScheduler | None:
     )
     scheduler.start()
     logger.info("match scheduler started: every %s hours", interval_hours)
+    return scheduler
+
+
+def _run_scheduled_recommend(storage: Storage) -> None:
+    """One scheduled recommendation refresh: fresh LB client, close (F7)."""
+    client = ListenBrainzClient()
+    try:
+        refresh_recommendations(storage, client)
+    finally:
+        client.close()
+
+
+def build_rec_scheduler(storage: Storage) -> BackgroundScheduler | None:
+    """Start the weekly recommendation-refresh scheduler (F7), or ``None``.
+
+    No credential gate — the labs API is keyless and a refresh over zero
+    watched artists costs nothing — so the only ``None`` case is disabling
+    via ``$ENCORE_REC_INTERVAL_HOURS <= 0``. Same conservative posture as
+    its siblings: first run one interval away, ``coalesce`` after downtime,
+    per-batch failures skipped inside the refresh.
+    """
+    interval_hours = _configured_interval(REC_INTERVAL_ENV, DEFAULT_REC_INTERVAL_HOURS)
+    if interval_hours <= 0:
+        logger.info("recommend scheduler disabled (%s=%s)", REC_INTERVAL_ENV, interval_hours)
+        return None
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        _run_scheduled_recommend,
+        "interval",
+        args=[storage],
+        hours=interval_hours,
+        id=REC_JOB_ID,
+        coalesce=True,  # after downtime, run once — never queue a backlog
+        max_instances=1,
+    )
+    scheduler.start()
+    logger.info("recommend scheduler started: every %s hours", interval_hours)
     return scheduler

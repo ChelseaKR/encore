@@ -7,7 +7,10 @@ into shell history); `encore sync` is the on-demand library sync (F1);
 and `encore matches` works the review queue it fills; `encore watch` is the
 on-demand release-watch cycle (F3); `encore channels` manages Apprise
 notification destinations and `encore notify` runs one delivery cycle (F4);
-`encore feeds` mints and rotates the F5 feed URLs. Every on-demand command
+`encore feeds` mints and rotates the F5 feed URLs; `encore artists` and
+`encore settings` manage F10 watch policy (types, muting, priority);
+`encore recommend` refreshes F7 recommendations and `recommendations`
+works them (list / dismiss / promote). Every on-demand command
 has a scheduled twin in `encore.scheduler`, running the same pass on an
 interval — `encore match` and the match scheduler share
 `run_matching_pass`, so the manual and automatic paths cannot drift.
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 import sys
 from collections.abc import Callable
@@ -59,6 +63,8 @@ from encore.models import CHANNEL_MODES
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
 from encore.plex import PlexMusicClient, PlexWriteAttemptError
+from encore.recommend.engine import PROVENANCE_LIMIT, refresh_recommendations
+from encore.recommend.lb import ListenBrainzClient
 from encore.secretstore import SecretDecryptionError
 from encore.storage import DATA_DIR_ENV, Storage, StorageError, resolve_data_dir
 from encore.sync import SyncError, sync_artists
@@ -279,6 +285,34 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="TYPES",
         help="Comma-separated secondary types allowed by default "
         "('' clears the list; omit to keep the current list)",
+    )
+
+    recommend = subparsers.add_parser(
+        "recommend", help="Run one recommendation refresh over the watched library (F7)"
+    )
+    recommend.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    recommend.add_argument(
+        "--limit", type=int, default=50, help="How many candidates to persist (default: 50)"
+    )
+
+    recs = subparsers.add_parser("recommendations", help="Recommended artists (F7)")
+    recs_sub = recs.add_subparsers(dest="recs_command", required=True)
+    recs_list = recs_sub.add_parser("list", help="Show recommended artists, best first")
+    recs_list.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    recs_list.add_argument("--limit", type=int, default=20, help="How many to show")
+    recs_dismiss = recs_sub.add_parser(
+        "dismiss", help="Dismiss a candidate — it never comes back in a refresh"
+    )
+    recs_dismiss.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    recs_dismiss.add_argument(
+        "--mbid", required=True, help="The MBID shown by `recommendations list`"
+    )
+    recs_promote = recs_sub.add_parser(
+        "promote", help="Promote a candidate into your watched library (F8)"
+    )
+    recs_promote.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    recs_promote.add_argument(
+        "--mbid", required=True, help="The MBID shown by `recommendations list`"
     )
 
     return parser
@@ -884,6 +918,125 @@ def _cmd_settings(args: argparse.Namespace) -> int:
     return handler(args)
 
 
+def _cmd_recommend(args: argparse.Namespace) -> int:
+    """Run one recommendation refresh and print the counts."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    client = ListenBrainzClient()
+    try:
+        report = refresh_recommendations(storage, client, limit=max(1, args.limit))
+    finally:
+        client.close()
+        storage.close()
+    print(
+        f"recommend complete: seeds={report.seeds} rows={report.rows_received} "
+        f"candidates={report.candidates} stored={report.stored} "
+        f"failed_batches={report.batches_failed}"
+    )
+    if report.degraded:
+        print("some batches failed — results may be incomplete until the next refresh.")
+    if not report.seeds:
+        print("No watched artists to seed from — run `encore sync` and `encore match` first.")
+    return 0
+
+
+def _render_provenance(storage: Storage, provenance_json: str | None) -> str:
+    """Render a candidate's provenance as 'similar to X, Y' (names resolved locally)."""
+    if not provenance_json:
+        return ""
+    try:
+        payload: object = json.loads(provenance_json)
+    except ValueError:
+        return ""
+    sources = payload.get("sources", []) if isinstance(payload, dict) else []
+    mbids: list[str] = []
+    for entry in sources[:PROVENANCE_LIMIT]:
+        if isinstance(entry, dict) and isinstance(entry.get("mbid"), str):
+            mbids.append(entry["mbid"])
+    names = storage.match_names_by_mbids(mbids)
+    ordered = [names[mbid] for mbid in mbids if mbid in names]
+    if not ordered:
+        return ""
+    return "similar to " + ", ".join(ordered)
+
+
+def _cmd_recs_list(args: argparse.Namespace) -> int:
+    """Show recommended artists with their scores and provenance."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        recs = storage.list_recommendations(limit=max(1, args.limit))
+    finally:
+        storage.close()
+    if not recs:
+        print("No recommendations yet. Run `encore recommend` once artists are matched.")
+        return 0
+    # Provenance needs the storage layer, so render before closing it.
+    try:
+        lines: list[str] = []
+        for rec in recs:
+            comment = f" ({rec.comment})" if rec.comment else ""
+            lines.append(f"{rec.name}{comment}  score={rec.score:.3f}  mbid={rec.mbid}")
+            provenance = _render_provenance(storage, rec.provenance_json)
+            if provenance:
+                lines.append(f"    {provenance}")
+    finally:
+        storage.close()
+    for line in lines:
+        print(line)
+    return 0
+
+
+def _cmd_recs_dismiss(args: argparse.Namespace) -> int:
+    """Dismiss one recommendation (sticky across refreshes)."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage.set_recommendation_status(args.mbid, "dismissed")
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    print("Dismissed. It will not reappear in future refreshes.")
+    return 0
+
+
+def _cmd_recs_promote(args: argparse.Namespace) -> int:
+    """Promote one recommendation (F8 watches releases from promoted artists)."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage.set_recommendation_status(args.mbid, "promoted")
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    print("Promoted. Its upcoming releases join discovery in the next watch cycle.")
+    return 0
+
+
+def _cmd_recs(args: argparse.Namespace) -> int:
+    """Dispatch a `recommendations …` subcommand."""
+    handler = _RECS_COMMANDS.get(args.recs_command)
+    if handler is None:  # pragma: no cover - argparse rejects unknown subcommands
+        return 1
+    return handler(args)
+
+
 def _cmd_plex(args: argparse.Namespace) -> int:
     """Dispatch an `encore plex …` subcommand."""
     if args.plex_command == "configure":
@@ -920,6 +1073,12 @@ _SETTINGS_COMMANDS = {
     "default-types": _cmd_settings_default_types,
 }
 
+_RECS_COMMANDS = {
+    "list": _cmd_recs_list,
+    "dismiss": _cmd_recs_dismiss,
+    "promote": _cmd_recs_promote,
+}
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
     "sync": _cmd_sync,
@@ -928,6 +1087,8 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "watch": _cmd_watch,
     "notify": _cmd_notify,
     "events": _cmd_events,
+    "recommend": _cmd_recommend,
+    "recommendations": _cmd_recs,
     "channels": _cmd_channels,
     "feeds": _cmd_feeds,
     "plex": _cmd_plex,
