@@ -739,6 +739,7 @@ def _cmd_artists_list(args: argparse.Namespace) -> int:
     try:
         directory = storage.list_artist_directory()
         defaults = storage.get_watch_defaults()
+        weights = storage.listening_weights()
         overrides = {
             row.plex_rating_key: parse_settings_json(row.settings_json)
             for row, _status in directory
@@ -757,6 +758,9 @@ def _cmd_artists_list(args: argparse.Namespace) -> int:
         tombstone = " [removed from Plex]" if row.removed_at is not None else ""
         override = overrides.get(row.plex_rating_key, SettingsOverride())
         print(f"{row.name}  key={row.plex_rating_key} [{state}]{tombstone}")
+        # F9: plays are shown, never hidden — weighting must be explainable.
+        weight = weights.get(row.plex_rating_key, 0.0)
+        print(f"    plays={row.play_count} listening-weight={weight:.2f}")
         print(f"    {_describe_override(override, defaults)}")
     return 0
 

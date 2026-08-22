@@ -90,6 +90,10 @@ class PlexArtist:
     name: str
     guid: str | None
     library_key: str
+    # Lifetime plays reported by the server (F9 listening history). Zero
+    # when absent: an unplayed or never-scrobbled artist must be
+    # indistinguishable from "no history" so weighting degrades gracefully.
+    play_count: int = 0
 
 
 class PlexMusicClient:
@@ -180,14 +184,17 @@ class PlexMusicClient:
             # plexapi auto-reloads a partially populated object when a normal
             # attribute lookup returns None. A missing GUID is valid, so read
             # the already parsed value directly and avoid an unnecessary
-            # metadata request (or an offline-sync failure).
+            # metadata request (or an offline-sync failure). Play counts are
+            # the same shape: absent means zero, never a re-fetch.
             guid = vars(item).get("guid")
+            raw_play_count = vars(item).get("viewCount")
             artists.append(
                 PlexArtist(
                     rating_key=str(item.ratingKey),
                     name=str(item.title),
                     guid=str(guid) if guid else None,
                     library_key=library_key,
+                    play_count=int(raw_play_count) if raw_play_count else 0,
                 )
             )
         return artists

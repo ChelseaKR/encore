@@ -31,6 +31,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Listening-history weighting (M3/F9).** The sync now reads each
+  artist's lifetime play count from the Plex server it already talks to
+  (read-only, no extra requests — `viewCount` rides the inventory
+  response) and stores it per artist (`encore artists list` shows plays
+  and the normalized 0–1 listening weight). The most-played artist weighs
+  1.0; an unplayed or history-less library weighs all-zero, which is the
+  documented degrade-to-unweighted signal downstream consumers (the F7
+  rec seeder) check for. Deliberately *not* done here: auto-boosting
+  notification priority from play counts would be silent magic — F10's
+  explicit `--priority instant` tier is the way an artist breaks a digest
+  window, and the weighting stays visible and explainable instead.
 - **Per-artist and global watch settings — release types, muting, priority
   (M3/F10).** The noise-control keystone, resolved in one new policy layer
   (`encore.artistsettings`) that every consumer shares. **Types:** a

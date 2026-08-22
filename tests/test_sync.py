@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlmodel import select
+from sqlmodel import col, select
 
-from encore.models import Artist
+from encore.models import Artist, utcnow
 from encore.plex import PlexMusicClient
 from encore.storage import Storage
 from encore.sync import SyncError, sync_artists
@@ -207,4 +207,69 @@ def test_sync_records_the_plex_machine_identifier_for_deep_links(tmp_path: Path)
     sync_artists(storage, _client([FakeLibrary(key="1", title="Music", artists=[])]))
 
     assert storage.get_plex_machine_identifier() == "fixture-machine-id"
+    storage.close()
+
+
+def test_sync_carries_play_counts_and_reports_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # F9: lifetime plays ride every sync; a changed count is an update.
+    from tests.plex_fixtures import FakeArtist, FakeLibrary, make_client_session
+
+    session, base_url = make_client_session(
+        [
+            FakeLibrary(
+                key="1",
+                title="Music",
+                artists=[
+                    FakeArtist("101", "Played A Lot", play_count=142),
+                    FakeArtist("102", "Never Played"),
+                ],
+            )
+        ]
+    )
+    storage = Storage(tmp_path)
+    storage.set_plex_credentials(base_url, "fixture-token")
+    client = PlexMusicClient(base_url, "fixture-token", session=session)
+    monkeypatch.setattr(PlexMusicClient, "__init__", PlexMusicClient.__init__)
+
+    first = sync_artists(storage, client)
+
+    assert first.added == 2
+    weights = storage.listening_weights()
+    assert weights["101"] == 1.0  # the top-played artist weighs exactly 1
+    assert weights["102"] == 0.0
+
+    # Plays went up: an update, and the new truth is stored (even a drop).
+    session2, base_url2 = make_client_session(
+        [
+            FakeLibrary(
+                key="1",
+                title="Music",
+                artists=[FakeArtist("101", "Played A Lot", play_count=150)],
+            )
+        ]
+    )
+    client2 = PlexMusicClient(base_url2, "fixture-token", session=session2)
+    second = sync_artists(storage, client2)
+    assert second.updated == 1
+    assert storage.listening_weights()["101"] == 1.0
+    storage.close()
+
+
+def test_listening_weights_degrade_to_all_zero_without_history(tmp_path: Path) -> None:
+    from encore.models import Artist
+
+    storage = Storage(tmp_path)
+    with storage.session() as session:
+        session.add(Artist(plex_rating_key="a", name="A", library_key="1"))
+        session.commit()
+    assert storage.listening_weights() == {"a": 0.0}
+    with storage.session() as session:
+        row = session.exec(select(Artist).where(col(Artist.plex_rating_key) == "a")).first()
+        assert row is not None
+        row.removed_at = utcnow()
+        session.add(row)
+        session.commit()
+    assert storage.listening_weights() == {}  # tombstoned rows own nothing
     storage.close()

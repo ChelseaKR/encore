@@ -88,6 +88,7 @@ def _upsert_artist(existing: dict[str, Artist], entry: PlexArtist) -> tuple[Arti
                 name=entry.name,
                 plex_guid=entry.guid,
                 library_key=entry.library_key,
+                play_count=entry.play_count,
                 first_seen_at=now,
                 last_seen_at=now,
             ),
@@ -97,15 +98,19 @@ def _upsert_artist(existing: dict[str, Artist], entry: PlexArtist) -> tuple[Arti
     if row.removed_at is not None:
         row.removed_at = None
         outcome = "resurrected"
-    elif (row.name, row.plex_guid, row.library_key) != (
+    elif (row.name, row.plex_guid, row.library_key, row.play_count) != (
         entry.name,
         entry.guid,
         entry.library_key,
+        entry.play_count,
     ):
         outcome = "updated"
     row.name = entry.name
     row.plex_guid = entry.guid
     row.library_key = entry.library_key
+    # F9: plays ride every sync. A count that *dropped* is still the
+    # server's truth — store it, never clamp.
+    row.play_count = entry.play_count
     row.last_seen_at = now
     return row, outcome
 
