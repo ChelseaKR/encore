@@ -31,6 +31,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **RED metrics for the HTTP surface — the observability debt, paid
+  (OBS-11).** Every request is observed into a thread-safe in-process
+  registry (Rate, Errors, Duration count/sum/max) and exposed at
+  `/metrics` in Prometheus text format, dependency-free. Labels are
+  **route templates, never raw paths** — feed URLs embed a capability
+  token in the path, so unmatched requests aggregate under one opaque
+  `unmatched` label and a regression test pins that a token-bearing
+  request leaves nothing but the template behind. `/metrics` carries no
+  taste data (templates, methods, statuses only) and is unauthenticated
+  by design on the localhost default bind.
 - **Promoted recommendations join the watched library (M3/F8).** Promoting
   a candidate (`encore recommendations promote --mbid …`) is the explicit
   opt-in: its MBID joins the release-watch pool, so its new releases and
