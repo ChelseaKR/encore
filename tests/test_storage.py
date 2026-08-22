@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import select
 
-from encore.matching.mb import RateLimiter, ReleaseGroupInfo
+from encore.matching.mb import ReleaseGroupInfo
 from encore.storage import (
     DATA_DIR_ENV,
     DB_FILENAME,
@@ -323,7 +323,7 @@ def test_a_muted_artist_unmuted_later_does_not_replay_the_muted_release(tmp_path
 
 def test_a_promoted_candidate_joins_the_watch_pool_and_renders(tmp_path: Path) -> None:
     from encore.models import Recommendation
-    from encore.watch import watch_all_artists
+
     # F8: promotion is the opt-in. A promoted recommendation MBID is
     # watched like owned music, its events render with the candidate's
     # name, and its future dates reach the calendar — a dismissed or
@@ -341,13 +341,9 @@ def test_a_promoted_candidate_joins_the_watch_pool_and_renders(tmp_path: Path) -
                 status="promoted",
             )
         )
+        session.add(Recommendation(mbid="mbid-new", name="New Candidate", score=0.5, status="new"))
         session.add(
-            Recommendation(mbid="mbid-new", name="New Candidate", score=0.5, status="new")
-        )
-        session.add(
-            Recommendation(
-                mbid="mbid-dismissed", name="Dismissed", score=0.4, status="dismissed"
-            )
+            Recommendation(mbid="mbid-dismissed", name="Dismissed", score=0.4, status="dismissed")
         )
         session.commit()
 
