@@ -326,3 +326,61 @@ def test_an_unparseable_interval_falls_back_to_the_default(
         )
     assert value == scheduler.DEFAULT_NOTIFY_INTERVAL_MINUTES
     assert "falling back" in caplog.text
+
+
+def test_rec_scheduler_stays_off_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    storage = Storage(tmp_path)
+    monkeypatch.setenv(scheduler.REC_INTERVAL_ENV, "0")
+    with caplog.at_level(logging.INFO):
+        assert scheduler.build_rec_scheduler(storage) is None
+    assert "recommend scheduler disabled" in caplog.text
+    storage.close()
+
+
+def test_rec_scheduler_defaults_to_a_weekly_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = Storage(tmp_path)
+    fake = FakeScheduler()
+    monkeypatch.setattr(scheduler, "BackgroundScheduler", lambda: fake)
+    monkeypatch.delenv(scheduler.REC_INTERVAL_ENV, raising=False)
+
+    result = scheduler.build_rec_scheduler(storage)
+
+    assert result is fake
+    args, kwargs = fake.jobs[0]
+    assert args[:2] == (scheduler._run_scheduled_recommend, "interval")
+    assert kwargs == {
+        "args": [storage],
+        "hours": 168.0,
+        "id": scheduler.REC_JOB_ID,
+        "coalesce": True,
+        "max_instances": 1,
+    }
+    storage.close()
+
+
+def test_scheduled_recommend_builds_and_closes_its_own_lb_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = Storage(tmp_path)
+
+    class FakeLBClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake_client = FakeLBClient()
+    refreshes: list[object] = []
+    monkeypatch.setattr(scheduler, "ListenBrainzClient", lambda: fake_client)
+    monkeypatch.setattr(scheduler, "refresh_recommendations", lambda _s, c: refreshes.append(c))
+
+    scheduler._run_scheduled_recommend(storage)
+
+    assert refreshes == [fake_client]
+    assert fake_client.closed
+    storage.close()

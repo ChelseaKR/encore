@@ -20,6 +20,7 @@ __all__ = [
     "CHANNEL_MODES",
     "DELIVERY_STATUSES",
     "MATCH_STATUSES",
+    "RECOMMENDATION_STATUSES",
     "RELEASE_EVENT_KINDS",
     "SETTINGS_ROW_ID",
     "AppSettings",
@@ -28,6 +29,7 @@ __all__ = [
     "Delivery",
     "EventView",
     "NotificationChannel",
+    "Recommendation",
     "ReleaseEvent",
     "ReleaseGroup",
     "UpcomingReleaseView",
@@ -258,6 +260,38 @@ class Delivery(SQLModel, table=True):
     attempts: int = Field(default=0)
     next_attempt_at: datetime = Field(default_factory=utcnow, index=True)
     last_error: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# Valid Recommendation.status values. "new" is a live candidate the user
+# has not judged; "dismissed" and "promoted" are sticky decisions a refresh
+# must never overwrite (a dismissal survives recomputation — F7).
+RECOMMENDATION_STATUSES = ("new", "dismissed", "promoted")
+
+
+class Recommendation(SQLModel, table=True):
+    """One recommended artist derived from the library (M3/F7).
+
+    ``mbid`` is unique: one row per candidate artist, refreshed in place.
+    ``score`` is the aggregated weighted similarity (0..1] from the latest
+    refresh; ``provenance_json`` records which owned artists produced it
+    and how much each contributed — recommendations render *with* their
+    provenance or not at all (the transparency requirement F7 carries).
+    Dismissing or promoting a row pins its status; later refreshes update
+    scores of ``new`` rows only, never resurrect a dismissed artist.
+    Names are taste data (docs/audits/dpia.md §4) — local only, never logged.
+    """
+
+    __tablename__ = "recommendations"
+
+    id: int | None = Field(default=None, primary_key=True)
+    mbid: str = Field(unique=True, index=True)
+    name: str
+    comment: str | None = Field(default=None)
+    score: float = Field(default=0.0)
+    provenance_json: str | None = Field(default=None)
+    status: str = Field(default="new", index=True)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

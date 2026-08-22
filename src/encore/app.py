@@ -40,6 +40,7 @@ from encore.feeds import ICAL_EVENT_LIMIT, RSS_EVENT_LIMIT, render_ical, render_
 from encore.scheduler import (
     build_match_scheduler,
     build_notify_scheduler,
+    build_rec_scheduler,
     build_sync_scheduler,
     build_watch_scheduler,
 )
@@ -52,6 +53,7 @@ _SCHEDULER_CHECKS = (
     ("match_scheduler", "match_scheduler"),
     ("watch_scheduler", "watch_scheduler"),
     ("notify_scheduler", "notify_scheduler"),
+    ("rec_scheduler", "rec_scheduler"),
 )
 
 # Everything under this prefix is capability-gated and must never confirm its
@@ -187,6 +189,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         app.state.match_scheduler = build_match_scheduler(app.state.storage)
         app.state.watch_scheduler = build_watch_scheduler(app.state.storage)
         app.state.notify_scheduler = build_notify_scheduler(app.state.storage)
+        app.state.rec_scheduler = build_rec_scheduler(app.state.storage)
         try:
             yield
         finally:
@@ -195,6 +198,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 "match_scheduler",
                 "watch_scheduler",
                 "notify_scheduler",
+                "rec_scheduler",
             ):
                 running = getattr(app.state, attr, None)
                 if running is not None:

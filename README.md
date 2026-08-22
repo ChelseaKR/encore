@@ -50,10 +50,10 @@ recommendable in public without a legality asterisk.
 - **Stays quiet by default**: albums-only until you opt in to EPs, singles, live
   recordings, or compilations — globally or per artist (`encore artists settings`),
   with muting (forever or until a date) and per-artist priority tiers.
-- Recommends similar artists via ListenBrainz labs, with visible provenance
-  ("similar to X, Y you already own"), and watches for new releases from artists
-  you don't have yet — **planned next (F7/F8), not built yet**; the CLI surface
-  below lists what ships today.
+- **Recommends** similar artists via ListenBrainz labs, weighted by your actual
+  listening, with visible provenance ("similar to X, Y you already own") and one-command
+  dismiss/promote (`encore recommend`, `encore recommendations`). Watching new releases
+  *from* recommended artists you don't own yet is planned next (F8).
 
 ## Non-goals (hard, not aspirational)
 

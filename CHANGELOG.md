@@ -31,6 +31,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Similar-artist recommendations with visible provenance (M3/F7).** A
+  weekly refresh (`$ENCORE_REC_INTERVAL_HOURS`, default 168; fifth
+  scheduler with its `/readyz` heartbeat) seeds ListenBrainz labs'
+  similar-artists dataset from the watched library — batched fifty MBIDs
+  per polite request, scores aggregated across seeds and **weighted by F9
+  listening history** (an all-zero play history degrades to unweighted
+  seeding). Every candidate carries provenance: which owned artists
+  produced it and what each contributed, rendered as "similar to X, Y"
+  in `encore recommendations list`. `dismiss` pins a candidate out of all
+  future refreshes; `promote` marks it for F8's discovery watch. Owned
+  artists are never candidates. The intelligence is MetaBrainz's open
+  dataset — no ML in-process, ADR-0009 stays true.
 - **Listening-history weighting (M3/F9).** The sync now reads each
   artist's lifetime play count from the Plex server it already talks to
   (read-only, no extra requests — `viewCount` rides the inventory

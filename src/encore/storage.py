@@ -38,6 +38,7 @@ from encore.models import (
     CHANNEL_MODES,
     DELIVERY_STATUSES,
     MATCH_STATUSES,
+    RECOMMENDATION_STATUSES,
     RELEASE_EVENT_KINDS,
     SETTINGS_ROW_ID,
     AppSettings,
@@ -46,6 +47,7 @@ from encore.models import (
     Delivery,
     EventView,
     NotificationChannel,
+    Recommendation,
     ReleaseEvent,
     ReleaseGroup,
     UpcomingReleaseView,
@@ -200,6 +202,11 @@ def _migration_0009_play_counts(connection: Connection) -> None:
         )
 
 
+def _migration_0010_recommendations(connection: Connection) -> None:
+    """v10 (F7): create ``recommendations`` (guarded — no-op on fresh)."""
+    SQLModel.metadata.create_all(connection)
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -212,6 +219,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0007_shared_release_groups,
     _migration_0008_watch_settings,
     _migration_0009_play_counts,
+    _migration_0010_recommendations,
 )
 
 
@@ -1136,6 +1144,130 @@ class Storage:
         if top <= 0:
             return {row.plex_rating_key: 0.0 for row in live}
         return {row.plex_rating_key: row.play_count / top for row in live}
+
+    # -- recommendations (F7) ---------------------------------------------------
+
+    def watched_seed_weights(self) -> dict[str, float]:
+        """Watched artist MBIDs with F9 listening weights, for the rec seeder.
+
+        Joins matched identities to their Plex rows' play counts and
+        normalizes across the watched set. An entirely play-free set
+        degrades to equal weights of 1.0 — unweighted seeding, the F9
+        acceptance rule — rather than a useless all-zero map.
+        """
+        with self.session() as session:
+            pairs = session.exec(
+                select(ArtistMatch.mbid, Artist.play_count)
+                .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
+                .where(
+                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                    ArtistMatch.mbid.is_not(None),  # type: ignore[union-attr]
+                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                )
+            ).all()
+        weights: dict[str, float] = {}
+        for mbid, play_count in pairs:
+            if mbid is None:
+                continue
+            weights[mbid] = float(play_count or 0)
+        top = max(weights.values(), default=0.0)
+        if top <= 0:
+            return {mbid: 1.0 for mbid in weights}
+        return {mbid: weight / top for mbid, weight in weights.items()}
+
+    @staticmethod
+    def _require_recommendation(session: Session, mbid: str) -> Recommendation:
+        """Fetch one recommendation by MBID inside an open session, or raise."""
+        row = session.exec(select(Recommendation).where(Recommendation.mbid == mbid)).first()
+        if row is None:
+            # MBIDs are taste data — never echoed into error strings.
+            raise StorageError("no recommendation exists for that MBID")
+        return row
+
+    def upsert_recommendations(self, rows: Sequence[Recommendation]) -> int:
+        """Write a refresh's candidates; sticky statuses survive untouched.
+
+        A ``new`` row is updated in place (score, provenance, name); an
+        absent candidate is inserted; a ``dismissed`` or ``promoted`` row
+        is *not* modified — a user decision outlives any recomputation,
+        which is what makes dismissals worth having.
+        """
+        written = 0
+        now = utcnow()
+        with self.session() as session:
+            for candidate in rows:
+                existing = session.exec(
+                    select(Recommendation).where(Recommendation.mbid == candidate.mbid)
+                ).first()
+                if existing is not None and existing.status != "new":
+                    continue
+                if existing is None:
+                    session.add(
+                        Recommendation(
+                            mbid=candidate.mbid,
+                            name=candidate.name,
+                            comment=candidate.comment,
+                            score=candidate.score,
+                            provenance_json=candidate.provenance_json,
+                            status="new",
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                else:
+                    existing.name = candidate.name
+                    existing.comment = candidate.comment
+                    existing.score = candidate.score
+                    existing.provenance_json = candidate.provenance_json
+                    existing.updated_at = now
+                    session.add(existing)
+                written += 1
+            session.commit()
+        return written
+
+    def list_recommendations(self, status: str = "new", limit: int = 50) -> list[Recommendation]:
+        """Recommendations in one status, best first."""
+        if status not in RECOMMENDATION_STATUSES:
+            raise StorageError(
+                f"invalid recommendation status {status!r}; expected {RECOMMENDATION_STATUSES}"
+            )
+        with self.session() as session:
+            statement = (
+                select(Recommendation)
+                .where(Recommendation.status == status)
+                .order_by(col(Recommendation.score).desc())
+            )
+            return list(session.exec(statement).all()[:limit])
+
+    def set_recommendation_status(self, mbid: str, status: str) -> Recommendation:
+        """Pin a user decision on one candidate.
+
+        Raises:
+            StorageError: no such candidate or an unknown status.
+        """
+        if status not in ("dismissed", "promoted"):
+            raise StorageError(f"cannot set recommendation status to {status!r}")
+        with self.session() as session:
+            row = self._require_recommendation(session, mbid)
+            row.status = status
+            row.updated_at = utcnow()
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+        return row
+
+    def match_names_by_mbids(self, mbids: Sequence[str]) -> dict[str, str]:
+        """Display names for owned artist MBIDs (provenance rendering)."""
+        unique_ids = list(dict.fromkeys(mbids))
+        if not unique_ids:
+            return {}
+        with self.session() as session:
+            rows = session.exec(
+                select(ArtistMatch).where(
+                    col(ArtistMatch.mbid).in_(unique_ids),
+                )
+            ).all()
+        return {row.mbid: row.artist_name for row in rows if row.mbid is not None}
 
     # -- standing feeds (F5) ---------------------------------------------------
 
