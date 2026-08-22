@@ -500,15 +500,19 @@ class Storage:
     # -- release watching (F3) -------------------------------------------------
 
     def list_watched_artist_mbids(self) -> list[str]:
-        """Distinct MBIDs to poll: matched artists still present in Plex.
+        """Distinct MBIDs to poll: matched artists still present in Plex,
+        plus promoted recommendation candidates (F8).
 
         Joins ``artist_matches`` (status ``auto``/``manual``, non-NULL MBID)
         to ``artists`` on the Plex rating key and excludes tombstoned rows —
         this is what makes "removal unwatches on next sync" (F1 acceptance)
-        true without F3 keeping its own bookkeeping.
+        true without F3 keeping its own bookkeeping. F8 adds the MBIDs the
+        user explicitly **promoted** from recommendations: promotion *is*
+        the opt-in, so a promoted artist's releases flow through the same
+        watch → event → channel pipeline as owned music — never silently.
         """
         with self.session() as session:
-            statement = (
+            owned = session.exec(
                 select(ArtistMatch.mbid)
                 .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
                 .where(
@@ -518,7 +522,15 @@ class Storage:
                 )
                 .distinct()
             )
-            return [mbid for mbid in session.exec(statement).all() if mbid is not None]
+            watched = {mbid for mbid in owned if mbid is not None}
+            promoted = session.exec(
+                select(Recommendation.mbid).where(
+                    Recommendation.status == "promoted",
+                    col(Recommendation.mbid).not_in(watched),
+                )
+            ).all()
+            watched.update(mbid for mbid in promoted if mbid)
+            return sorted(watched)
 
     def list_release_groups(self, artist_mbid: str) -> list[ReleaseGroup]:
         """All release-groups already recorded for one artist MBID."""
@@ -1311,6 +1323,48 @@ class Storage:
             session.commit()
         return token
 
+    def _upcoming_owned_rows(
+        self, session: Session, today: date
+    ) -> list[tuple[ReleaseGroup, str]]:
+        """(group, display name) for owned artists' day-precision future groups."""
+        statement = (
+            select(ReleaseGroup, ArtistMatch)
+            .join(
+                ArtistMatch,
+                ArtistMatch.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
+            )
+            .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
+            .where(
+                ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                Artist.removed_at.is_(None),  # type: ignore[union-attr]
+                func.length(ReleaseGroup.first_release_date) == 10,
+                ReleaseGroup.first_release_date >= today.isoformat(),
+            )
+        )
+        return [
+            (group, match.artist_name) for group, match in session.exec(statement).all()
+        ]
+
+    def _upcoming_promoted_rows(
+        self, session: Session, today: date
+    ) -> list[tuple[ReleaseGroup, str]]:
+        """(group, candidate name) for promoted candidates' future groups (F8).
+
+        Promoted candidates have no Plex row to join through — the
+        recommendation row *is* the identity here, and its name is the
+        display name. An inner join against ``artist_matches`` would drop
+        these rows from the calendar entirely.
+        """
+        statement = select(ReleaseGroup, Recommendation).join(
+            Recommendation,
+            Recommendation.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
+        ).where(
+            Recommendation.status == "promoted",
+            func.length(ReleaseGroup.first_release_date) == 10,
+            ReleaseGroup.first_release_date >= today.isoformat(),
+        )
+        return [(group, rec.name) for group, rec in session.exec(statement).all()]
+
     def list_upcoming_releases(self, today: date | None = None) -> list[UpcomingReleaseView]:
         """Announced releases from today forward, for the iCal feed (F5).
 
@@ -1318,58 +1372,46 @@ class Storage:
         announcement cannot become a calendar entry without inventing a day
         MusicBrainz did not publish (the same no-invented-precision rule the
         F4 renderer follows), so partial dates stay in the RSS feed only.
-        Scope matches the watch list: matched artists still present in Plex —
-        an unwatched artist's stored announcements drop off the calendar.
+        Scope matches the watch list: matched artists still present in Plex,
+        plus promoted recommendation candidates (F8) — an unwatched artist's
+        stored announcements drop off the calendar.
         Full ISO dates compare correctly as text, so the cut-off is SQL;
         rows are ordered by date then title.
         """
         if today is None:
             today = utcnow().date()
         with self.session() as session:
-            statement = (
-                select(ReleaseGroup, ArtistMatch)
-                .join(
-                    ArtistMatch,
-                    ArtistMatch.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
-                )
-                .join(Artist, Artist.plex_rating_key == ArtistMatch.artist_key)  # type: ignore[arg-type]
-                .where(
-                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
-                    Artist.removed_at.is_(None),  # type: ignore[union-attr]
-                    func.length(ReleaseGroup.first_release_date) == 10,
-                    ReleaseGroup.first_release_date >= today.isoformat(),
-                )
-                .order_by(col(ReleaseGroup.first_release_date), col(ReleaseGroup.title))
+            rows = self._upcoming_owned_rows(session, today) + self._upcoming_promoted_rows(
+                session, today
             )
-            views: list[UpcomingReleaseView] = []
-            seen_mbids: set[str] = set()
-            for group, match in session.exec(statement).all():
-                if group.mbid in seen_mbids:
-                    # Two Plex rows matched to one MBID (e.g. a duplicate
-                    # library entry) must not duplicate the calendar entry.
-                    continue
-                seen_mbids.add(group.mbid)
-                try:
-                    date.fromisoformat(group.first_release_date)
-                except ValueError:  # pragma: no cover - MB dates are ISO; belt and braces
-                    continue
-                secondary = (
-                    tuple(json.loads(group.secondary_types_json))
-                    if group.secondary_types_json
-                    else ()
-                )
-                views.append(
-                    UpcomingReleaseView(
-                        release_group_mbid=group.mbid,
-                        title=group.title,
-                        primary_type=group.primary_type,
-                        secondary_types=secondary,
-                        first_release_date=group.first_release_date,
-                        artist_mbid=group.artist_mbid,
-                        artist_name=match.artist_name,
-                    )
-                )
-            return views
+        views_by_group_mbid: dict[str, UpcomingReleaseView] = {}
+        for group, artist_name in rows:
+            if group.mbid in views_by_group_mbid:
+                # Two Plex rows matched to one MBID (e.g. a duplicate
+                # library entry) must not duplicate the calendar entry.
+                continue
+            try:
+                date.fromisoformat(group.first_release_date)
+            except ValueError:  # pragma: no cover - MB dates are ISO; belt and braces
+                continue
+            secondary = (
+                tuple(json.loads(group.secondary_types_json))
+                if group.secondary_types_json
+                else ()
+            )
+            views_by_group_mbid[group.mbid] = UpcomingReleaseView(
+                release_group_mbid=group.mbid,
+                title=group.title,
+                primary_type=group.primary_type,
+                secondary_types=secondary,
+                first_release_date=group.first_release_date,
+                artist_mbid=group.artist_mbid,
+                artist_name=artist_name,
+            )
+        return sorted(
+            views_by_group_mbid.values(),
+            key=lambda view: (view.first_release_date, view.title),
+        )
 
     # -- the read model shared by notifications, the in-app feed, and F5 -------
 
@@ -1393,7 +1435,7 @@ class Storage:
 
     @staticmethod
     def _build_event_views(session: Session, events: Sequence[ReleaseEvent]) -> list[EventView]:
-        """Assemble `EventView` rows with three bounded lookups, no ORM joins."""
+        """Assemble `EventView` rows with bounded lookups, no ORM joins."""
         if not events:
             return []
         group_ids = {event.release_group_id for event in events}
@@ -1410,6 +1452,18 @@ class Storage:
                 select(ArtistMatch).where(col(ArtistMatch.mbid).in_(artist_mbids))
             ).all()
             if match.mbid is not None
+        }
+        # F8: promoted candidates have no ArtistMatch row — their display
+        # name comes from the recommendation itself.
+        candidate_names = {
+            rec.mbid: rec.name
+            for rec in session.exec(
+                select(Recommendation).where(
+                    col(Recommendation.mbid).in_(
+                        artist_mbids - set(matches)
+                    )
+                )
+            ).all()
         }
         views: list[EventView] = []
         for row in events:
@@ -1431,7 +1485,9 @@ class Storage:
                     secondary_types=secondary,
                     first_release_date=group.first_release_date,
                     artist_mbid=group.artist_mbid,
-                    artist_name=match.artist_name if match is not None else "",
+                    artist_name=match.artist_name
+                    if match is not None
+                    else candidate_names.get(group.artist_mbid, ""),
                     plex_rating_key=match.artist_key if match is not None else None,
                 )
             )
