@@ -1324,9 +1324,7 @@ class Storage:
             session.commit()
         return token
 
-    def _upcoming_owned_rows(
-        self, session: Session, today: date
-    ) -> list[tuple[ReleaseGroup, str]]:
+    def _upcoming_owned_rows(self, session: Session, today: date) -> list[tuple[ReleaseGroup, str]]:
         """(group, display name) for owned artists' day-precision future groups."""
         statement = (
             select(ReleaseGroup, ArtistMatch)
@@ -1342,9 +1340,7 @@ class Storage:
                 ReleaseGroup.first_release_date >= today.isoformat(),
             )
         )
-        return [
-            (group, match.artist_name) for group, match in session.exec(statement).all()
-        ]
+        return [(group, match.artist_name) for group, match in session.exec(statement).all()]
 
     def _upcoming_promoted_rows(
         self, session: Session, today: date
@@ -1356,13 +1352,17 @@ class Storage:
         display name. An inner join against ``artist_matches`` would drop
         these rows from the calendar entirely.
         """
-        statement = select(ReleaseGroup, Recommendation).join(
-            Recommendation,
-            Recommendation.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
-        ).where(
-            Recommendation.status == "promoted",
-            func.length(ReleaseGroup.first_release_date) == 10,
-            ReleaseGroup.first_release_date >= today.isoformat(),
+        statement = (
+            select(ReleaseGroup, Recommendation)
+            .join(
+                Recommendation,
+                Recommendation.mbid == ReleaseGroup.artist_mbid,  # type: ignore[arg-type]
+            )
+            .where(
+                Recommendation.status == "promoted",
+                func.length(ReleaseGroup.first_release_date) == 10,
+                ReleaseGroup.first_release_date >= today.isoformat(),
+            )
         )
         return [(group, rec.name) for group, rec in session.exec(statement).all()]
 
@@ -1396,9 +1396,7 @@ class Storage:
             except ValueError:  # pragma: no cover - MB dates are ISO; belt and braces
                 continue
             secondary = (
-                tuple(json.loads(group.secondary_types_json))
-                if group.secondary_types_json
-                else ()
+                tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
             )
             views_by_group_mbid[group.mbid] = UpcomingReleaseView(
                 release_group_mbid=group.mbid,
@@ -1460,9 +1458,7 @@ class Storage:
             rec.mbid: rec.name
             for rec in session.exec(
                 select(Recommendation).where(
-                    col(Recommendation.mbid).in_(
-                        artist_mbids - set(matches)
-                    )
+                    col(Recommendation.mbid).in_(artist_mbids - set(matches))
                 )
             ).all()
         }
