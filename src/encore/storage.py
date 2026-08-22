@@ -500,16 +500,17 @@ class Storage:
     # -- release watching (F3) -------------------------------------------------
 
     def list_watched_artist_mbids(self) -> list[str]:
-        """Distinct MBIDs to poll: matched artists still present in Plex,
-        plus promoted recommendation candidates (F8).
+        """Return the distinct MBIDs to poll: owned artists plus F8 promotions.
 
-        Joins ``artist_matches`` (status ``auto``/``manual``, non-NULL MBID)
-        to ``artists`` on the Plex rating key and excludes tombstoned rows —
-        this is what makes "removal unwatches on next sync" (F1 acceptance)
-        true without F3 keeping its own bookkeeping. F8 adds the MBIDs the
-        user explicitly **promoted** from recommendations: promotion *is*
-        the opt-in, so a promoted artist's releases flow through the same
-        watch → event → channel pipeline as owned music — never silently.
+        Matched artists still present in Plex, plus promoted recommendation
+        candidates. Joins ``artist_matches`` (status ``auto``/``manual``,
+        non-NULL MBID) to ``artists`` on the Plex rating key and excludes
+        tombstoned rows — this is what makes "removal unwatches on next
+        sync" (F1 acceptance) true without F3 keeping its own bookkeeping.
+        F8 adds the MBIDs the user explicitly **promoted** from
+        recommendations: promotion *is* the opt-in, so a promoted artist's
+        releases flow through the same watch → event → channel pipeline as
+        owned music — never silently.
         """
         with self.session() as session:
             owned = session.exec(
