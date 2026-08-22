@@ -356,7 +356,7 @@ def test_a_promoted_candidate_joins_the_watch_pool_and_renders(tmp_path: Path) -
         def close(self) -> None:
             pass
 
-        def browse_release_groups(self, artist_mbid: str):
+        def browse_release_groups(self, artist_mbid: str) -> list[ReleaseGroupInfo]:
             if artist_mbid == "mbid-promoted":
                 return [
                     ReleaseGroupInfo(
