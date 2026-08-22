@@ -47,6 +47,51 @@ def test_reopen_existing_dir_is_idempotent_and_persists(tmp_path: Path) -> None:
     second.close()
 
 
+def test_v6_release_groups_migrate_to_per_artist_uniqueness(tmp_path: Path) -> None:
+    # Rebuild the v6 shape by hand — globally-unique mbid, no composite
+    # index — then reopen: migration v7 must relax mbid and add the
+    # per-(artist, group) unique index, so a release-group credited to two
+    # watched artists can hold one row per artist.
+    storage = Storage(tmp_path)
+    storage.add_release_group(
+        artist_mbid="mb-artist-1",
+        mbid="rg-shared",
+        title="Live Split",
+        primary_type="EP",
+        secondary_types=("Live",),
+        first_release_date="2023-11-02",
+    )
+    with storage.engine.connect() as connection:
+        connection.exec_driver_sql("DROP INDEX uq_release_group_artist_group")
+        connection.exec_driver_sql("DROP INDEX ix_release_groups_mbid")
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX ix_release_groups_mbid ON release_groups (mbid)"
+        )
+        connection.exec_driver_sql("PRAGMA user_version = 6")
+        connection.commit()
+    storage.close()
+
+    reopened = Storage(tmp_path)
+    reopened.add_release_group(
+        artist_mbid="mb-artist-2",
+        mbid="rg-shared",
+        title="Live Split",
+        primary_type="EP",
+        secondary_types=("Live",),
+        first_release_date="2023-11-02",
+    )
+    assert [row.mbid for row in reopened.list_release_groups("mb-artist-1")] == ["rg-shared"]
+    assert [row.mbid for row in reopened.list_release_groups("mb-artist-2")] == ["rg-shared"]
+    with reopened.engine.connect() as connection:
+        indexes = {
+            row[1]: bool(row[2])
+            for row in connection.exec_driver_sql("PRAGMA index_list(release_groups)")
+        }
+    assert indexes["uq_release_group_artist_group"] is True
+    assert indexes["ix_release_groups_mbid"] is False
+    reopened.close()
+
+
 def test_newer_schema_than_build_refuses_to_open(tmp_path: Path) -> None:
     storage = Storage(tmp_path)
     with storage.engine.connect() as connection:

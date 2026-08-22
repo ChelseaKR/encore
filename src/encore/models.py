@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 __all__ = [
@@ -132,14 +132,23 @@ class ReleaseGroup(SQLModel, table=True):
     date text verbatim (``YYYY``, ``YYYY-MM``, or ``YYYY-MM-DD``; empty when
     MB has none) — parsing happens at diff time, never at storage time.
     ``artist_mbid`` links to the matched identity, not the Plex row, so a
-    manual re-match (F2) naturally re-scopes the watch. Titles and MBIDs are
-    taste data (docs/audits/dpia.md §4) — local only, never logged.
+    manual re-match (F2) naturally re-scopes the watch. Rows are unique per
+    *(artist, group)*, not per group: a release-group credited to several
+    watched artists (a split single, a collab live EP) is one row per artist,
+    so each artist's baseline and events stay independent — a globally-unique
+    ``mbid`` made the second artist's insert a fatal IntegrityError. The
+    uniqueness is a named unique index rather than a table constraint because
+    migration v7 has to add it to live SQLite databases, where only an index
+    can be added; declaring the same index here keeps fresh and migrated
+    schemas identical. Titles and MBIDs are taste data (docs/audits/dpia.md
+    §4) — local only, never logged.
     """
 
     __tablename__ = "release_groups"
+    __table_args__ = (Index("uq_release_group_artist_group", "artist_mbid", "mbid", unique=True),)
 
     id: int | None = Field(default=None, primary_key=True)
-    mbid: str = Field(unique=True, index=True)
+    mbid: str = Field(index=True)
     artist_mbid: str = Field(index=True)
     title: str
     primary_type: str | None = Field(default=None)

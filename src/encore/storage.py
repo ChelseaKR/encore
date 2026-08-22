@@ -135,6 +135,31 @@ def _migration_0006_feed_token(connection: Connection) -> None:
         connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN feed_token_cipher BLOB")
 
 
+def _migration_0007_shared_release_groups(connection: Connection) -> None:
+    """v7 (F3 fix): release-group rows are unique per (artist, group), not per group.
+
+    A release-group credited to several watched artists (a split single, a
+    collab live EP) needs one row per artist so each artist's baseline and
+    events stay independent; the v4 schema's globally-unique ``mbid`` index
+    made the second artist's insert an IntegrityError that killed the whole
+    watch cycle. Both steps are guarded, so this is correct for a fresh
+    database (v1 already created the current shape) and for a real v6
+    database written by the F5 build (unique ``mbid``, no composite index).
+    """
+    indexes = {
+        row[1]: bool(row[2])
+        for row in connection.exec_driver_sql("PRAGMA index_list(release_groups)")
+    }
+    if indexes.get("ix_release_groups_mbid"):
+        connection.exec_driver_sql("DROP INDEX ix_release_groups_mbid")
+        connection.exec_driver_sql("CREATE INDEX ix_release_groups_mbid ON release_groups (mbid)")
+    if "uq_release_group_artist_group" not in indexes:
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX uq_release_group_artist_group "
+            "ON release_groups (artist_mbid, mbid)"
+        )
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -144,6 +169,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0004_release_watching,
     _migration_0005_notifications,
     _migration_0006_feed_token,
+    _migration_0007_shared_release_groups,
 )
 
 
@@ -482,14 +508,21 @@ class Storage:
             session.refresh(row)
         return row
 
-    def update_release_group_date(self, mbid: str, first_release_date: str) -> ReleaseGroup:
+    def update_release_group_date(
+        self, artist_mbid: str, mbid: str, first_release_date: str
+    ) -> ReleaseGroup:
         """Record a revised first-release date on an already-seen group.
 
+        Scoped to one artist's row: a group shared between watched artists
+        has one row per artist (v7), and each artist's poll revises its own.
+
         Raises:
-            StorageError: no release-group row exists for ``mbid``.
+            StorageError: no release-group row exists for this artist + MBID.
         """
         with self.session() as session:
-            statement = select(ReleaseGroup).where(ReleaseGroup.mbid == mbid)
+            statement = select(ReleaseGroup).where(
+                ReleaseGroup.artist_mbid == artist_mbid, ReleaseGroup.mbid == mbid
+            )
             row = session.exec(statement).first()
             if row is None:
                 # The offending MBID is deliberately not echoed — error strings
