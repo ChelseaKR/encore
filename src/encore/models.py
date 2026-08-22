@@ -56,6 +56,9 @@ class AppSettings(SQLModel, table=True):
     the RSS/iCal routes): the feeds are pure taste data, so the token is a
     secret and is stored encrypted like the Plex token (docs/adr/0008),
     rotatable via `Storage.rotate_feed_token`.
+    ``watch_defaults_json`` is the F10 global watch policy (type allowlists;
+    muting and priority are per-artist and rejected at this layer) — parsed
+    and validated by `encore.artistsettings`, never read raw.
     """
 
     __tablename__ = "settings"
@@ -66,6 +69,7 @@ class AppSettings(SQLModel, table=True):
     plex_library_keys: str | None = Field(default=None)
     plex_machine_identifier: str | None = Field(default=None)
     feed_token_cipher: bytes | None = Field(default=None)
+    watch_defaults_json: str | None = Field(default=None)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
@@ -76,7 +80,10 @@ class Artist(SQLModel, table=True):
     Plex on a later sync — the row is kept (so F2 match results survive a
     temporary removal) but the artist is unwatched. MusicBrainz identity
     decisions live in `ArtistMatch`, keyed by the Plex rating key, per the
-    one-migration-per-feature policy above.
+    one-migration-per-feature policy above. ``settings_json`` is the F10
+    per-artist watch override (type allowlists, muting, priority) — a
+    partial layer over the global defaults, parsed and validated by
+    `encore.artistsettings`, never read raw.
     """
 
     __tablename__ = "artists"
@@ -86,6 +93,7 @@ class Artist(SQLModel, table=True):
     name: str
     plex_guid: str | None = Field(default=None)
     library_key: str = Field(index=True)
+    settings_json: str | None = Field(default=None)
     first_seen_at: datetime = Field(default_factory=utcnow)
     last_seen_at: datetime = Field(default_factory=utcnow)
     removed_at: datetime | None = Field(default=None)

@@ -23,6 +23,17 @@ from sqlalchemy import Connection, event, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, SQLModel, col, create_engine, select
 
+from encore.artistsettings import (
+    PRIORITY_DIGEST,
+    PRIORITY_INSTANT,
+    PRIORITY_NORMAL,
+    ArtistWatchSettings,
+    SettingsError,
+    SettingsOverride,
+    canonical_override_json,
+    parse_settings_json,
+    resolve_effective,
+)
 from encore.models import (
     CHANNEL_MODES,
     DELIVERY_STATUSES,
@@ -160,6 +171,25 @@ def _migration_0007_shared_release_groups(connection: Connection) -> None:
         )
 
 
+def _migration_0008_watch_settings(connection: Connection) -> None:
+    """v8 (F10): per-artist ``artists.settings_json`` + global watch defaults.
+
+    Both steps are guarded, so this is correct for a fresh database (v1
+    already created everything from current metadata) and for a real v7
+    database written by the F5 build (which has neither column). The blobs
+    themselves are written only through `Storage` methods that validate via
+    `encore.artistsettings` — a raw hand-edited value fails closed at read
+    time with `SettingsError` instead of silently changing behavior.
+    """
+    SQLModel.metadata.create_all(connection)
+    artists_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(artists)")}
+    if "settings_json" not in artists_columns:
+        connection.exec_driver_sql("ALTER TABLE artists ADD COLUMN settings_json VARCHAR")
+    settings_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(settings)")}
+    if "watch_defaults_json" not in settings_columns:
+        connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN watch_defaults_json VARCHAR")
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -170,6 +200,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0005_notifications,
     _migration_0006_feed_token,
     _migration_0007_shared_release_groups,
+    _migration_0008_watch_settings,
 )
 
 
@@ -700,13 +731,23 @@ class Storage:
 
     # -- delivery queue (F4) ---------------------------------------------------
 
-    def ensure_deliveries(self, now: datetime | None = None) -> int:
-        """Materialize missing (event, channel) delivery rows; return how many.
+    def ensure_deliveries(self, now: datetime | None = None) -> tuple[int, int]:
+        """Materialize missing (event, channel) delivery rows; honor muting (F10).
 
         Only events created *after* a channel was added fan out to it. Adding
         a channel therefore never replays history — the same
         don't-flood-on-first-contact rule the F3 baseline applies to a newly
         watched artist (docs/adr/0011), applied to a newly added channel.
+
+        Events from artists **muted on this cycle** are skipped, and their
+        ``notified_at`` is stamped immediately with no deliveries at all:
+        muting means "these releases never page me," so lifting the mute
+        later must not replay what it suppressed. The events stay recorded
+        and visible in the feeds — muting silences pings, not history.
+
+        Returns:
+            ``(created, muted_skipped)`` — delivery rows created and events
+            suppressed as muted.
 
         ``now`` stamps ``next_attempt_at`` so a row created during a cycle is
         due *in* that cycle; without it a brand-new delivery would be a few
@@ -715,39 +756,73 @@ class Storage:
         if now is None:
             now = utcnow()
         created = 0
+        muted_skipped = 0
         with self.session() as session:
             channels = session.exec(
                 select(NotificationChannel).where(NotificationChannel.enabled)
             ).all()
             if not channels:
-                return 0
+                return 0, 0
             events = session.exec(
                 select(ReleaseEvent).where(col(ReleaseEvent.notified_at).is_(None))
             ).all()
             if not events:
-                return 0
+                return 0, 0
             event_ids = [event.id for event in events if event.id is not None]
+            group_rows = {
+                group.id: group
+                for group in session.exec(
+                    select(ReleaseGroup).where(
+                        col(ReleaseGroup.id).in_({e.release_group_id for e in events})
+                    )
+                ).all()
+            }
+            policies = self.effective_watch_settings_for_mbids(
+                [group.artist_mbid for group in group_rows.values()]
+            )
             existing = {
                 (delivery.event_id, delivery.channel_id)
                 for delivery in session.exec(
                     select(Delivery).where(col(Delivery.event_id).in_(event_ids))
                 ).all()
             }
+            today = now.date()
             for event in events:
                 if event.id is None:  # pragma: no cover - persisted rows always have one
                     continue
-                for channel in channels:
-                    if channel.id is None:  # pragma: no cover - same
-                        continue
-                    if event.created_at < channel.created_at:
-                        continue
-                    if (event.id, channel.id) in existing:
-                        continue
-                    session.add(
-                        Delivery(event_id=event.id, channel_id=channel.id, next_attempt_at=now)
-                    )
-                    created += 1
+                group = group_rows.get(event.release_group_id)
+                policy = policies.get(group.artist_mbid) if group is not None else None
+                if policy is not None and policy.is_muted_on(today):
+                    # Settled-without-delivery: visible in feeds, never sent.
+                    event.notified_at = now
+                    session.add(event)
+                    muted_skipped += 1
+                    continue
+                created += self._create_missing_deliveries(session, event, channels, existing, now)
             session.commit()
+        return created, muted_skipped
+
+    @staticmethod
+    def _create_missing_deliveries(
+        session: Session,
+        event: ReleaseEvent,
+        channels: Sequence[NotificationChannel],
+        existing: set[tuple[int, int]],
+        now: datetime,
+    ) -> int:
+        """Insert absent (event, channel) rows; return how many were created."""
+        if event.id is None:  # pragma: no cover - persisted rows always have one
+            return 0
+        created = 0
+        for channel in channels:
+            if channel.id is None:  # pragma: no cover - persisted rows have one
+                continue
+            if event.created_at < channel.created_at:
+                continue
+            if (event.id, channel.id) in existing:
+                continue
+            session.add(Delivery(event_id=event.id, channel_id=channel.id, next_attempt_at=now))
+            created += 1
         return created
 
     def due_deliveries(self, channel_id: int, now: datetime) -> list[Delivery]:
@@ -817,6 +892,222 @@ class Storage:
                 settled += 1
             session.commit()
         return settled
+
+    # -- watch settings (F10) ---------------------------------------------------
+
+    def get_watch_defaults(self) -> SettingsOverride:
+        """Return the global watch policy layer (type allowlists only, by validation).
+
+        Raises:
+            StorageError: the stored blob fails validation — it is honored
+                by no consumer rather than half-honored by all of them.
+        """
+        with self.session() as session:
+            raw = self.get_settings(session).watch_defaults_json
+        try:
+            return parse_settings_json(raw)
+        except SettingsError as exc:
+            raise StorageError(f"stored global watch defaults are invalid: {exc}") from exc
+
+    def set_watch_default_types(
+        self,
+        allow_primary: Sequence[str] | None = None,
+        allow_secondary: Sequence[str] | None = None,
+    ) -> SettingsOverride:
+        """Replace the global default type allowlists (both lists required together).
+
+        ``None`` for a list means "leave that list as currently stored";
+        pass an empty sequence explicitly to forbid that whole class (e.g.
+        ``allow_secondary=()`` = no secondary types pass anywhere). The
+        muting/priority fields of the layer stay unset — they are
+        per-artist by design.
+
+        Raises:
+            StorageError: a slug is unknown or the resulting policy would
+                be incoherent.
+        """
+        try:
+            current = self.get_watch_defaults()
+            primary = (
+                tuple(dict.fromkeys(allow_primary))
+                if allow_primary is not None
+                else current.allow_primary
+            )
+            secondary = (
+                tuple(dict.fromkeys(allow_secondary))
+                if allow_secondary is not None
+                else current.allow_secondary
+            )
+            override = SettingsOverride(allow_primary=primary, allow_secondary=secondary)
+            # Validate through the same parser a read will use: an empty
+            # primary allowlist is legal but must be deliberate, so it goes
+            # through canonical JSON and back.
+            canonical = canonical_override_json(override)
+            recheck = parse_settings_json(canonical)
+            if recheck.allow_primary is None and recheck.allow_secondary is None:
+                canonical = None
+        except SettingsError as exc:
+            raise StorageError(str(exc)) from exc
+        with self.session() as session:
+            settings = self.get_settings(session)
+            settings.watch_defaults_json = canonical
+            settings.updated_at = utcnow()
+            session.add(settings)
+            session.commit()
+        return parse_settings_json(canonical)
+
+    def get_artist_settings(self, artist_key: str) -> SettingsOverride:
+        """One Plex artist's stored override layer (empty when none).
+
+        Raises:
+            StorageError: the artist row does not exist, or its blob fails
+                validation.
+        """
+        with self.session() as session:
+            row = session.exec(select(Artist).where(Artist.plex_rating_key == artist_key)).first()
+        if row is None:
+            raise StorageError(f"no artist exists for key {artist_key!r}")
+        try:
+            return parse_settings_json(row.settings_json)
+        except SettingsError as exc:
+            raise StorageError(
+                f"stored watch settings for {artist_key!r} are invalid: {exc}"
+            ) from exc
+
+    def set_artist_settings(self, artist_key: str, override: SettingsOverride) -> SettingsOverride:
+        """Persist one artist's override layer (canonicalized; empty erases).
+
+        The caller supplies the *complete* new layer — partial updates are
+        the CLI's job (read-modify-write against `get_artist_settings`), so
+        storage stays a dumb, honest writer.
+
+        Raises:
+            StorageError: the artist row does not exist or the override
+                fails validation.
+        """
+        try:
+            canonical = canonical_override_json(override)
+            if canonical is not None:
+                # Round-trip through the parser so nothing is stored that a
+                # read would reject.
+                canonical_override_json(parse_settings_json(canonical))
+        except SettingsError as exc:
+            raise StorageError(str(exc)) from exc
+        with self.session() as session:
+            row = session.exec(select(Artist).where(Artist.plex_rating_key == artist_key)).first()
+            if row is None:
+                raise StorageError(f"no artist exists for key {artist_key!r}")
+            row.settings_json = canonical
+            session.add(row)
+            session.commit()
+        return parse_settings_json(canonical)
+
+    @staticmethod
+    def _fold_owner_policies(
+        candidates: Sequence[ArtistWatchSettings], today: date
+    ) -> ArtistWatchSettings:
+        """Fold several owners' resolved policies into one identity's policy.
+
+        Types: most-permissive owner wins (union of allowlists). Muting: on
+        only when *every* owner is muted. Priority: ``instant`` beats
+        ``digest`` beats ``normal``.
+        """
+        merged_primary: frozenset[str] = frozenset()
+        merged_secondary: frozenset[str] = frozenset()
+        for candidate in candidates:
+            merged_primary |= candidate.allow_primary
+            merged_secondary |= candidate.allow_secondary
+        muted = all(candidate.is_muted_on(today) for candidate in candidates)
+        priority = PRIORITY_NORMAL
+        for candidate in candidates:
+            if candidate.priority == PRIORITY_INSTANT:
+                priority = PRIORITY_INSTANT
+                break
+            if candidate.priority == PRIORITY_DIGEST:
+                priority = PRIORITY_DIGEST
+        return ArtistWatchSettings(
+            allow_primary=merged_primary,
+            allow_secondary=merged_secondary,
+            muted=muted,
+            mute_until=None,
+            priority=priority,
+        )
+
+    def effective_watch_settings_for_mbids(
+        self, artist_mbids: Sequence[str]
+    ) -> dict[str, ArtistWatchSettings]:
+        """Resolve effective settings for many artist MBIDs in one pass.
+
+        One MBID can be owned by several Plex rows (a duplicate library
+        entry matched to the same identity), so each MBID's policy folds
+        its owners' layers together — see `_fold_owner_policies` for the
+        per-field rules. Tombstoned rows own nothing (they are unwatched);
+        owners with no override resolve through the global defaults like
+        anyone else. Unknown MBIDs come back absent from the mapping, which
+        callers treat as "fully default".
+        """
+        today = utcnow().date()
+        unique_ids = list(dict.fromkeys(artist_mbids))
+        if not unique_ids:
+            return {}
+        defaults = self.get_watch_defaults()
+        with self.session() as session:
+            matches = session.exec(
+                select(ArtistMatch).where(
+                    col(ArtistMatch.mbid).in_(unique_ids),
+                    ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+                )
+            ).all()
+            keys_by_mbid: dict[str, list[str]] = {}
+            for match in matches:
+                if match.mbid is None:
+                    continue
+                keys_by_mbid.setdefault(match.mbid, []).append(match.artist_key)
+            live_rows = {
+                row.plex_rating_key: row
+                for row in session.exec(
+                    select(Artist).where(
+                        col(Artist.plex_rating_key).in_(
+                            {key for keys in keys_by_mbid.values() for key in keys}
+                        )
+                    )
+                ).all()
+                if row.removed_at is None
+            }
+        resolved: dict[str, ArtistWatchSettings] = {}
+        for mbid in unique_ids:
+            owner_keys = [key for key in keys_by_mbid.get(mbid, []) if key in live_rows]
+            if not owner_keys:
+                continue
+            candidates: list[ArtistWatchSettings] = []
+            for key in owner_keys:
+                try:
+                    layer = parse_settings_json(live_rows[key].settings_json)
+                except SettingsError as exc:
+                    raise StorageError(f"stored watch settings are invalid: {exc}") from exc
+                candidates.append(resolve_effective(defaults, layer))
+            resolved[mbid] = self._fold_owner_policies(candidates, today)
+        return resolved
+
+    def effective_watch_settings(self, artist_mbid: str) -> ArtistWatchSettings | None:
+        """Single-MBID convenience over `effective_watch_settings_for_mbids`."""
+        return self.effective_watch_settings_for_mbids([artist_mbid]).get(artist_mbid)
+
+    def list_artist_directory(self) -> list[tuple[Artist, str | None]]:
+        """Every artist row (tombstones included) with its match status, if any.
+
+        The `encore artists` directory view's read model: one row per Plex
+        entry — the entity users think about and configure — joined to its
+        identity decision so the listing can show *and* configure in the
+        same vocabulary. Tombstoned rows are included (their settings
+        survive a temporary removal, like their matches do).
+        """
+        with self.session() as session:
+            statuses = {
+                match.artist_key: match.status for match in session.exec(select(ArtistMatch)).all()
+            }
+            rows = list(session.exec(select(Artist).order_by(col(Artist.name))).all())
+        return [(row, statuses.get(row.plex_rating_key)) for row in rows]
 
     # -- standing feeds (F5) ---------------------------------------------------
 
