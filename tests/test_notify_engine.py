@@ -337,3 +337,94 @@ def test_delivery_logs_never_carry_taste_data_or_channel_urls(
     for needle in (ARTIST_NAME, RELEASE_TITLE, GROUP_MBID, CHANNEL_URL, "other-needle"):
         assert needle not in logged
     assert "delivery cycle:" in logged
+
+
+def test_an_instant_artist_breaks_through_a_digest_window(storage: Storage) -> None:
+    from encore.artistsettings import SettingsOverride
+
+    storage.add_channel("email", CHANNEL_URL, mode="digest", digest_interval_hours=24.0)
+    seed_event(storage, rating_key="1")
+    storage.set_artist_settings("1", SettingsOverride(priority="instant"))
+    sender = RecordingSender()
+
+    report = run_delivery_cycle(storage, sender, now=NOW)
+
+    # The digest window had not elapsed (first digest would have been due,
+    # but the point is the event did NOT wait for a rollup): it went out as
+    # its own notification on this cycle.
+    assert report.sent == 1
+    assert report.digests_sent == 0
+    assert RELEASE_TITLE in sender.calls[0][1].title
+
+
+def test_a_digest_artist_waits_even_on_an_instant_channel(storage: Storage) -> None:
+    from encore.artistsettings import SettingsOverride
+
+    storage.add_channel("phone", CHANNEL_URL)  # instant channel
+    seed_event(storage, rating_key="1")
+    storage.set_artist_settings("1", SettingsOverride(priority="digest"))
+    sender = RecordingSender()
+
+    # First rollup anchors the window immediately (the same rule digest
+    # channels have had since F4); the next event inside the window waits
+    # even though the channel is instant...
+    first = run_delivery_cycle(storage, sender, now=NOW)
+    assert first.digests_sent == 1
+
+    seed_event(
+        storage,
+        rating_key="2",
+        artist_name="Second Artist",
+        artist_mbid="99999999-2222-3333-4444-555555555555",
+        group_mbid="ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    storage.set_artist_settings("2", SettingsOverride(priority="digest"))
+    held = run_delivery_cycle(storage, sender, now=NOW + dt.timedelta(hours=1))
+    assert held.digests_sent == 0 and len(sender.calls) == 1
+
+    # ...and releases when the window elapses, as a rollup of one rendered
+    # plainly (docs/adr/0012).
+    released = run_delivery_cycle(storage, sender, now=NOW + dt.timedelta(hours=25))
+    assert released.digests_sent == 1
+    assert "Second Artist" in sender.calls[1][1].title
+
+
+def test_normal_artists_are_unaffected_without_any_settings(storage: Storage) -> None:
+    storage.add_channel("phone", CHANNEL_URL)
+    seed_event(storage, rating_key="1")
+    sender = RecordingSender()
+    report = run_delivery_cycle(storage, sender, now=NOW)
+    assert report.sent == 1 and report.muted_skipped == 0
+
+
+def test_muted_artists_produce_no_deliveries_and_never_replay(storage: Storage) -> None:
+    from encore.artistsettings import SettingsOverride
+
+    storage.add_channel("phone", CHANNEL_URL)
+    seed_event(storage, rating_key="1")
+    storage.set_artist_settings("1", SettingsOverride(muted=True))
+    sender = RecordingSender()
+
+    muted = run_delivery_cycle(storage, sender, now=NOW)
+    assert muted.muted_skipped == 1
+    assert len(sender.calls) == 0
+
+    # Un-muting later does not replay the suppressed release...
+    storage.set_artist_settings("1", SettingsOverride(muted=False))
+    after = run_delivery_cycle(storage, sender, now=NOW + dt.timedelta(hours=1))
+    assert after.enqueued == 0 and len(sender.calls) == 0
+
+    # ...but a genuinely new one arrives again. (Seeded by hand: seed_event
+    # would re-insert the same artist row.)
+    group = storage.add_release_group(
+        artist_mbid="mbid-x",
+        mbid="ffff0000-bbbb-cccc-dddd-eeeeeeeeeeee",
+        title="Later album",
+        primary_type="Album",
+        secondary_types=(),
+        first_release_date="2026-09-01",
+    )
+    assert group.id is not None
+    storage.add_event(group.id, "new")
+    fresh = run_delivery_cycle(storage, sender, now=NOW + dt.timedelta(hours=2))
+    assert fresh.sent == 1

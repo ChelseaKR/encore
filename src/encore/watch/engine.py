@@ -11,6 +11,10 @@ Semantics (docs/adr/0001 + docs/adr/0011):
 - **After baseline:** an unseen group becomes a ``new`` event (or ``upcoming``
   when future-dated); a changed first-release date on a seen group becomes a
   ``date_changed`` event.
+- **Type policy (F10).** A group whose MusicBrainz type tags are not all
+  opted in by the identity's watch settings is recorded but raises no
+  event — filtered releases are not news to this user, counted in
+  ``events_filtered`` so silence is observable rather than mysterious.
 - **Skip, don't queue.** A per-artist failure — MusicBrainz *or* storage —
   is counted and the poll moves on: one bad artist (or a MetaBrainz outage
   mid-run) must not wedge the whole cycle, and the next scheduled run
@@ -86,6 +90,7 @@ class ArtistWatchResult:
     events_new: int = 0
     events_upcoming: int = 0
     events_date_changed: int = 0
+    events_filtered: int = 0
 
 
 @dataclass
@@ -99,6 +104,7 @@ class WatchReport:
     events_new: int = 0
     events_upcoming: int = 0
     events_date_changed: int = 0
+    events_filtered: int = 0
 
     def add(self, result: ArtistWatchResult) -> None:
         """Fold one artist's counts into the cycle totals."""
@@ -109,6 +115,7 @@ class WatchReport:
         self.events_new += result.events_new
         self.events_upcoming += result.events_upcoming
         self.events_date_changed += result.events_date_changed
+        self.events_filtered += result.events_filtered
 
 
 def watch_artist(
@@ -126,11 +133,19 @@ def watch_artist(
     if today is None:
         today = dt.datetime.now(dt.UTC).date()
     result = ArtistWatchResult(baselined=not storage.has_release_groups(artist_mbid))
+    # F10: resolve this identity's watch policy once per poll. A group whose
+    # type tags the policy does not allow is still *recorded* (the diff must
+    # stay exact so a later opt-in starts from truth), but raises no event:
+    # filtered releases are not news to this user, and a later change of
+    # mind applies going forward — flipping a filter on must never flood
+    # with yesterday's back catalog.
+    settings = storage.effective_watch_settings(artist_mbid)
     fetched = client.browse_release_groups(artist_mbid)
     result.groups_seen = len(fetched)
     known = {row.mbid: row for row in storage.list_release_groups(artist_mbid)}
     for info in fetched:
         seen = known.get(info.mbid)
+        allowed = settings is None or settings.passes(info.primary_type, info.secondary_types)
         if seen is None:
             row = storage.add_release_group(
                 artist_mbid=artist_mbid,
@@ -141,7 +156,9 @@ def watch_artist(
                 first_release_date=info.first_release_date,
             )
             kind = _kind_for_unseen(info, today)
-            if kind == "upcoming":
+            if not allowed:
+                result.events_filtered += 1
+            elif kind == "upcoming":
                 # Announcements are news even at baseline — they go to the
                 # calendar/feeds (F5), not into the silent back catalog.
                 storage.add_event(_row_id(row.id), "upcoming")
@@ -151,8 +168,11 @@ def watch_artist(
                 result.events_new += 1
         elif seen.first_release_date != info.first_release_date:
             storage.update_release_group_date(artist_mbid, info.mbid, info.first_release_date)
-            storage.add_event(_row_id(seen.id), "date_changed")
-            result.events_date_changed += 1
+            if not allowed:
+                result.events_filtered += 1
+            else:
+                storage.add_event(_row_id(seen.id), "date_changed")
+                result.events_date_changed += 1
     return result
 
 
@@ -177,7 +197,7 @@ def watch_all_artists(storage: Storage, client: MusicBrainzClient) -> WatchRepor
         report.add(result)
     logger.info(
         "watch cycle: polled=%d failed=%d baselined=%d groups=%d "
-        "new=%d upcoming=%d date_changed=%d",
+        "new=%d upcoming=%d date_changed=%d filtered=%d",
         report.artists_polled,
         report.artists_failed,
         report.artists_baselined,
@@ -185,5 +205,6 @@ def watch_all_artists(storage: Storage, client: MusicBrainzClient) -> WatchRepor
         report.events_new,
         report.events_upcoming,
         report.events_date_changed,
+        report.events_filtered,
     )
     return report

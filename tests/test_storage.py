@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import stat
+from datetime import date
 from pathlib import Path
 
 import pytest
+from sqlmodel import select
 
 from encore.storage import (
     DATA_DIR_ENV,
@@ -127,4 +129,192 @@ def test_check_ready_ok_and_settings_row_is_singleton(tmp_path: Path) -> None:
         first = storage.get_settings(session)
         second = storage.get_settings(session)
         assert first.id == second.id == 1
+    storage.close()
+
+
+# -- watch settings (F10) ------------------------------------------------------
+
+
+def _seed_owned_artist(
+    storage: Storage, rating_key: str, name: str, mbid: str, removed: bool = False
+) -> None:
+    from datetime import UTC, datetime
+
+    from encore.models import Artist
+
+    with storage.session() as session:
+        session.add(Artist(plex_rating_key=rating_key, name=name, library_key="1"))
+        if removed:
+            row = session.exec(select(Artist).where(Artist.plex_rating_key == rating_key)).first()
+            assert row is not None
+            row.removed_at = datetime.now(UTC)
+        session.commit()
+    storage.save_artist_match(rating_key, name, "auto", mbid=mbid)
+
+
+def test_watch_default_types_round_trip_and_merge(tmp_path: Path) -> None:
+    storage = Storage(tmp_path)
+    assert storage.get_watch_defaults().is_empty()
+
+    storage.set_watch_default_types(allow_primary=("album",), allow_secondary=())
+    defaults = storage.get_watch_defaults()
+    assert defaults.allow_primary == ("album",)
+    assert defaults.allow_secondary == ()
+
+    # Omitted lists are left as stored; a new list replaces wholesale.
+    storage.set_watch_default_types(allow_secondary=("live",))
+    defaults = storage.get_watch_defaults()
+    assert defaults.allow_primary == ("album",)
+    assert defaults.allow_secondary == ("live",)
+
+    with pytest.raises(StorageError):
+        storage.set_watch_default_types(allow_primary=("boxset",))
+    storage.close()
+
+
+def test_artist_settings_round_trip_requires_a_real_row(tmp_path: Path) -> None:
+    storage = Storage(tmp_path)
+    _seed_owned_artist(storage, "key-1", "Low", "mbid-low")
+    from encore.artistsettings import SettingsOverride
+
+    stored = storage.set_artist_settings("key-1", SettingsOverride(muted=True))
+    assert stored.muted is True
+    again = storage.get_artist_settings("key-1")
+    assert again == stored
+
+    with pytest.raises(StorageError):
+        storage.get_artist_settings("missing-key")
+    with pytest.raises(StorageError):
+        storage.set_artist_settings("missing-key", SettingsOverride(muted=True))
+    storage.close()
+
+
+def test_effective_settings_aggregate_across_owners_of_one_mbid(tmp_path: Path) -> None:
+    # Two Plex rows matched to one MusicBrainz identity (a duplicate entry).
+    from encore.artistsettings import SettingsOverride
+
+    storage = Storage(tmp_path)
+    _seed_owned_artist(storage, "key-a", "Low A", "mbid-low")
+    _seed_owned_artist(storage, "key-b", "Low B", "mbid-low")
+
+    # Types: most-permissive owner wins.
+    storage.set_artist_settings("key-a", SettingsOverride(allow_primary=("album",)))
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None
+    assert "album" in resolved.allow_primary
+    storage.set_artist_settings("key-b", SettingsOverride(allow_primary=("album", "ep")))
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None
+    assert resolved.allow_primary == frozenset({"album", "ep"})
+
+    # Muting: suppressed only when *every* owner is muted.
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None and not resolved.is_muted_on(date.today())
+    storage.set_artist_settings("key-a", SettingsOverride(muted=True))
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None and not resolved.is_muted_on(date.today())
+    storage.set_artist_settings("key-b", SettingsOverride(muted=True))
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None and resolved.is_muted_on(date.today())
+
+    # Priority: instant beats digest beats normal.
+    storage.set_artist_settings("key-b", SettingsOverride(priority="digest"))
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None and resolved.priority == "digest"
+    storage.set_artist_settings("key-b", SettingsOverride(priority="instant"))
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None and resolved.priority == "instant"
+
+    # Tombstoned owners own nothing: unmuting via removal is immediate.
+    from datetime import UTC, datetime
+
+    from sqlmodel import col
+    from sqlmodel import select as sel
+
+    from encore.models import Artist
+
+    with storage.session() as session:
+        row = session.exec(sel(Artist).where(col(Artist.plex_rating_key) == "key-a")).first()
+        assert row is not None
+        row.removed_at = datetime.now(UTC)
+        session.add(row)
+        session.commit()
+    resolved = storage.effective_watch_settings("mbid-low")
+    assert resolved is not None
+    storage.close()
+
+
+def test_ensure_deliveries_settles_muted_events_without_creating_rows(tmp_path: Path) -> None:
+    from encore.artistsettings import SettingsOverride
+    from tests.notify_fixtures import seed_event
+
+    storage = Storage(tmp_path)
+    storage.add_channel("phone", "ntfy://user:pass@ntfy.example/encore")
+    seed_event(storage, rating_key="1", artist_mbid="mbid-muted-artist")
+    seed_event(storage, rating_key="2", artist_mbid="mbid-loud-artist")
+    storage.set_artist_settings("1", SettingsOverride(muted=True))
+
+    created, muted_skipped = storage.ensure_deliveries()
+
+    assert created > 0
+    assert muted_skipped == 1
+    events = {event.id: event for event in storage.list_events()}
+    muted_event, loud_event = events[1], events[2]
+    assert muted_event.notified_at is not None  # settled-without-delivery
+    deliveries = []
+    with storage.session() as session:
+        from encore.models import Delivery
+
+        deliveries = list(session.exec(select(Delivery)).all())
+    assert {d.event_id for d in deliveries} == {loud_event.id}
+    storage.close()
+
+
+def test_an_expired_mute_stops_suppressing_but_never_replays_history(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from encore.artistsettings import SettingsOverride
+    from tests.notify_fixtures import seed_event
+
+    storage = Storage(tmp_path)
+    storage.add_channel("phone", "ntfy://user:pass@ntfy.example/encore")
+    seed_event(storage, rating_key="1", artist_mbid="mbid-x")
+    yesterday = date.today() - timedelta(days=1)
+    storage.set_artist_settings("1", SettingsOverride(mute_until=yesterday))
+
+    created, muted_skipped = storage.ensure_deliveries()
+    assert created >= 0
+    # The mute had already expired when this event fanned out, so it is
+    # delivered normally...
+    assert muted_skipped == 0
+
+    # ...and a *fresh* mute that has expired never resurrects old events,
+    # because suppression stamps them settled the day they were skipped.
+    seed_event(
+        storage,
+        rating_key="2",
+        artist_mbid="mbid-y",
+        group_mbid="ffff0000-bbbb-cccc-dddd-eeeeeeeeeeee",
+    )
+    storage.set_artist_settings("2", SettingsOverride(mute_until=yesterday))
+    created, muted_skipped = storage.ensure_deliveries()
+    assert muted_skipped == 0
+    storage.close()
+
+
+def test_a_muted_artist_unmuted_later_does_not_replay_the_muted_release(tmp_path: Path) -> None:
+    from encore.artistsettings import SettingsOverride
+    from tests.notify_fixtures import seed_event
+
+    storage = Storage(tmp_path)
+    storage.add_channel("phone", "ntfy://user:pass@ntfy.example/encore")
+    seed_event(storage, rating_key="1", artist_mbid="mbid-z")
+    storage.set_artist_settings("1", SettingsOverride(muted=True))
+    created, muted_skipped = storage.ensure_deliveries()
+    assert muted_skipped == 1 and created == 0
+
+    storage.set_artist_settings("1", SettingsOverride(muted=False))
+    created, muted_skipped = storage.ensure_deliveries()
+    assert created == 0  # the release stays history; only future ones page
+    assert muted_skipped == 0
     storage.close()

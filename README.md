@@ -47,9 +47,13 @@ recommendable in public without a legality asterisk.
 - **Watches** for new release-groups and alerts through Apprise (ntfy, email,
   Discord, Telegram, Pushover, webhooks — ~90 services via one dependency), plus an
   in-app feed, RSS, and an iCal feed of upcoming release dates.
-- **Recommends** similar artists via ListenBrainz labs, with visible provenance
-  ("similar to X, Y you already own"), and — the synthesis feature — watches for new
-  releases *from artists you don't have yet*.
+- **Stays quiet by default**: albums-only until you opt in to EPs, singles, live
+  recordings, or compilations — globally or per artist (`encore artists settings`),
+  with muting (forever or until a date) and per-artist priority tiers.
+- Recommends similar artists via ListenBrainz labs, with visible provenance
+  ("similar to X, Y you already own"), and watches for new releases from artists
+  you don't have yet — **planned next (F7/F8), not built yet**; the CLI surface
+  below lists what ships today.
 
 ## Non-goals (hard, not aspirational)
 

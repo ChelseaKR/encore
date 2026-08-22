@@ -34,6 +34,7 @@ import getpass
 import os
 import sys
 from collections.abc import Callable
+from datetime import date
 
 # Explicit re-export ("as uvicorn"): tests monkeypatch `cli.uvicorn.run` directly
 # (see tests/test_cli.py), which needs this name to be a real, typed attribute of
@@ -41,6 +42,17 @@ from collections.abc import Callable
 # mypy treats as private to this module.
 import uvicorn as uvicorn
 
+from encore.artistsettings import (
+    DEFAULT_ALLOWED_PRIMARY,
+    PRIMARY_TYPE_SLUGS,
+    PRIORITY_TIERS,
+    SettingsError,
+    SettingsOverride,
+    canonical_override_json,
+    parse_primary_types,
+    parse_secondary_types,
+    parse_settings_json,
+)
 from encore.matching.engine import candidates_from_json, run_matching_pass
 from encore.matching.mb import MusicBrainzClient
 from encore.models import CHANNEL_MODES
@@ -197,6 +209,78 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="KEY",
         help="Music library key to watch (repeatable; omit to sync all music libraries)",
     )
+
+    artists = subparsers.add_parser("artists", help="Your library artists and their settings (F10)")
+    artists_sub = artists.add_subparsers(dest="artists_command", required=True)
+    artists_list = artists_sub.add_parser(
+        "list", help="List library artists with match status and per-artist settings"
+    )
+    artists_list.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+
+    artists_settings = artists_sub.add_parser(
+        "settings", help="Set one artist's release types, muting, or priority tier"
+    )
+    artists_settings.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    artists_settings.add_argument(
+        "--artist-key", required=True, help="The artist_key shown by `encore artists list`"
+    )
+    artists_settings.add_argument(
+        "--allow-primary",
+        default=None,
+        metavar="TYPES",
+        help="Comma-separated primary release types to allow for this artist "
+        f"(known: {','.join(sorted(PRIMARY_TYPE_SLUGS))}); replaces any previous list",
+    )
+    artists_settings.add_argument(
+        "--allow-secondary",
+        default=None,
+        metavar="TYPES",
+        help="Comma-separated secondary release types to allow (live, remix, ...)",
+    )
+    artists_settings.add_argument(
+        "--reset-types", action="store_true", help="Clear this artist's type overrides"
+    )
+    artists_settings.add_argument(
+        "--mute", action="store_true", help="Mute deliveries from this artist until unmuted"
+    )
+    artists_settings.add_argument(
+        "--mute-until",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Mute deliveries from this artist through a date",
+    )
+    artists_settings.add_argument("--unmute", action="store_true", help="Lift any mute")
+    artists_settings.add_argument(
+        "--priority",
+        default=None,
+        choices=PRIORITY_TIERS,
+        help="Delivery tier: instant breaks digest windows; digest waits even on "
+        "instant channels (default: normal — follow each channel's mode)",
+    )
+
+    settings = subparsers.add_parser("settings", help="Global defaults (F10)")
+    settings_sub = settings.add_subparsers(dest="settings_command", required=True)
+    settings_show = settings_sub.add_parser("show", help="Show the global watch defaults")
+    settings_show.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    settings_types = settings_sub.add_parser(
+        "default-types", help="Set the global default release-type allowlist"
+    )
+    settings_types.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    settings_types.add_argument(
+        "--primary",
+        default=None,
+        metavar="TYPES",
+        help="Comma-separated primary types every artist allows by default "
+        "(omit to keep the current list)",
+    )
+    settings_types.add_argument(
+        "--secondary",
+        default=None,
+        metavar="TYPES",
+        help="Comma-separated secondary types allowed by default "
+        "('' clears the list; omit to keep the current list)",
+    )
+
     return parser
 
 
@@ -417,7 +501,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         f"watch complete: polled={report.artists_polled} failed={report.artists_failed} "
         f"baselined={report.artists_baselined} groups={report.groups_seen} "
         f"new={report.events_new} upcoming={report.events_upcoming} "
-        f"date_changed={report.events_date_changed}"
+        f"date_changed={report.events_date_changed} filtered={report.events_filtered}"
     )
     return 0
 
@@ -623,6 +707,179 @@ def _cmd_channels(args: argparse.Namespace) -> int:
     return handler(args)
 
 
+def _describe_override(override: SettingsOverride, defaults: SettingsOverride) -> str:
+    """One-line human summary of an artist's settings against the global layer."""
+    parts: list[str] = []
+    if override.allow_primary is not None or override.allow_secondary is not None:
+        primary = ",".join(sorted(override.allow_primary or ()))
+        secondary = ",".join(sorted(override.allow_secondary or ()))
+        parts.append(f"types={primary or 'none'}+{secondary or 'none'} (override)")
+    if override.muted:
+        parts.append("muted")
+    if override.mute_until is not None:
+        parts.append(f"muted until {override.mute_until.isoformat()}")
+    if override.priority is not None:
+        parts.append(f"tier={override.priority}")
+    effective = parse_settings_json(canonical_override_json(defaults) or "")
+    eff_primary = override.allow_primary or effective.allow_primary or ("album",)
+    eff_secondary = override.allow_secondary or effective.allow_secondary or ()
+    suffix = f"; effective types: {','.join(sorted(eff_primary))}+{','.join(sorted(eff_secondary))}"
+    if not parts:
+        return "default" + suffix
+    return "; ".join(parts) + suffix
+
+
+def _cmd_artists_list(args: argparse.Namespace) -> int:
+    """List the library directory with match status and settings summaries."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        directory = storage.list_artist_directory()
+        defaults = storage.get_watch_defaults()
+        overrides = {
+            row.plex_rating_key: parse_settings_json(row.settings_json)
+            for row, _status in directory
+            if row.settings_json
+        }
+    except (StorageError, SettingsError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    if not directory:
+        print("No artists yet. Run `encore plex configure` and `encore sync` first.")
+        return 0
+    for row, status in directory:
+        state = status or "unmatched"
+        tombstone = " [removed from Plex]" if row.removed_at is not None else ""
+        override = overrides.get(row.plex_rating_key, SettingsOverride())
+        print(f"{row.name}  key={row.plex_rating_key} [{state}]{tombstone}")
+        print(f"    {_describe_override(override, defaults)}")
+    return 0
+
+
+def _cmd_artists_settings(args: argparse.Namespace) -> int:
+    """Read-modify-write one artist's settings override."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        current = storage.get_artist_settings(args.artist_key)
+        allow_primary = current.allow_primary
+        allow_secondary = current.allow_secondary
+        muted = current.muted
+        mute_until = current.mute_until
+        priority = current.priority
+        if args.reset_types:
+            allow_primary = None
+            allow_secondary = None
+        else:
+            if args.allow_primary is not None:
+                allow_primary = parse_primary_types(args.allow_primary)
+            if args.allow_secondary is not None:
+                allow_secondary = (
+                    ()
+                    if not args.allow_secondary.strip()
+                    else parse_secondary_types(args.allow_secondary)
+                )
+        if args.unmute:
+            muted = False
+            mute_until = None
+        if args.mute:
+            muted = True
+            mute_until = None
+        if args.mute_until is not None:
+            mute_until = date.fromisoformat(args.mute_until)
+            muted = None
+        if args.priority is not None:
+            priority = args.priority
+        override = SettingsOverride(
+            allow_primary=allow_primary,
+            allow_secondary=allow_secondary,
+            muted=muted,
+            mute_until=mute_until,
+            priority=priority,
+        )
+        stored = storage.set_artist_settings(args.artist_key, override)
+        defaults = storage.get_watch_defaults()
+    except (StorageError, SettingsError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    print(f"Settings for key {args.artist_key!r}: {_describe_override(stored, defaults)}")
+    return 0
+
+
+def _cmd_artists(args: argparse.Namespace) -> int:
+    """Dispatch an `encore artists …` subcommand."""
+    handler = _ARTISTS_COMMANDS.get(args.artists_command)
+    if handler is None:  # pragma: no cover - argparse rejects unknown subcommands
+        return 1
+    return handler(args)
+
+
+def _cmd_settings_show(args: argparse.Namespace) -> int:
+    """Print the global watch defaults in force for every artist."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        defaults = storage.get_watch_defaults()
+    except (StorageError, SettingsError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    primary = ",".join(sorted(defaults.allow_primary or DEFAULT_ALLOWED_PRIMARY))
+    secondary = ",".join(sorted(defaults.allow_secondary or ()))
+    print(f"Default allowed primary types:   {primary}")
+    print(f"Default allowed secondary types: {secondary or '(none)'}")
+    print("Per-artist overrides: encore artists settings --artist-key <key> ...")
+    return 0
+
+
+def _cmd_settings_default_types(args: argparse.Namespace) -> int:
+    """Update the global default release-type allowlist."""
+    try:
+        primary = parse_primary_types(args.primary) if args.primary else None
+        secondary: tuple[str, ...] | None = None
+        if args.secondary is not None:
+            secondary = () if not args.secondary.strip() else parse_secondary_types(args.secondary)
+        storage = Storage(args.data_dir)
+    except (StorageError, SettingsError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage.set_watch_default_types(allow_primary=primary, allow_secondary=secondary)
+        defaults = storage.get_watch_defaults()
+    except (StorageError, SettingsError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    shown_primary = ",".join(sorted(defaults.allow_primary or DEFAULT_ALLOWED_PRIMARY))
+    shown_secondary = ",".join(sorted(defaults.allow_secondary or ()))
+    print(f"Default allowed primary types:   {shown_primary}")
+    print(f"Default allowed secondary types: {shown_secondary or '(none)'}")
+    return 0
+
+
+def _cmd_settings(args: argparse.Namespace) -> int:
+    """Dispatch an `encore settings …` subcommand."""
+    handler = _SETTINGS_COMMANDS.get(args.settings_command)
+    if handler is None:  # pragma: no cover - argparse rejects unknown subcommands
+        return 1
+    return handler(args)
+
+
 def _cmd_plex(args: argparse.Namespace) -> int:
     """Dispatch an `encore plex …` subcommand."""
     if args.plex_command == "configure":
@@ -649,6 +906,16 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+_ARTISTS_COMMANDS = {
+    "list": _cmd_artists_list,
+    "settings": _cmd_artists_settings,
+}
+
+_SETTINGS_COMMANDS = {
+    "show": _cmd_settings_show,
+    "default-types": _cmd_settings_default_types,
+}
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
     "sync": _cmd_sync,
@@ -660,6 +927,8 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "channels": _cmd_channels,
     "feeds": _cmd_feeds,
     "plex": _cmd_plex,
+    "artists": _cmd_artists,
+    "settings": _cmd_settings,
 }
 
 

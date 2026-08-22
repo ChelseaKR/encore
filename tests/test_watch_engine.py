@@ -313,3 +313,94 @@ def test_list_events_filters_by_kind(storage: Storage, httpx_mock: HTTPXMock) ->
 
     assert [event.kind for event in storage.list_events(kind="upcoming")] == ["upcoming"]
     assert storage.list_events(kind="new") == []
+
+
+def test_type_policy_filters_events_but_still_records_groups(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    # Albums-only default: an EP and a live album are recorded (the diff
+    # must stay exact) but raise no events.
+    from encore.artistsettings import SettingsOverride
+
+    _add_watched_artist(storage, "key-1", "Low", "mbid-low")
+    httpx_mock.add_response(
+        json=mb_browse_response(
+            mb_release_group("g-album", "Album", primary_type="Album"),
+            mb_release_group("g-ep", "Some EP", primary_type="EP", first_release_date="2026-09-01"),
+            mb_release_group(
+                "g-live", "Live Thing", primary_type="Album", secondary_types=("Live",)
+            ),
+        )
+    )
+    result = watch_artist(storage, _client(), "mbid-low", today=TODAY)
+
+    assert result.groups_seen == 3
+    assert result.events_filtered == 2
+    assert result.events_new == 0  # first poll baselines silently anyway
+    assert len(storage.list_release_groups("mbid-low")) == 3
+
+    # A later opt-in applies going forward: the stored groups diff to
+    # nothing (no back-catalog flood), a genuinely new EP becomes news.
+    storage.set_artist_settings("key-1", SettingsOverride(allow_primary=("album", "ep")))
+    httpx_mock.add_response(
+        json=mb_browse_response(
+            mb_release_group("g-album", "Album", primary_type="Album"),
+            mb_release_group("g-ep", "Some EP", primary_type="EP", first_release_date="2026-09-01"),
+            mb_release_group(
+                "g-live", "Live Thing", primary_type="Album", secondary_types=("Live",)
+            ),
+            mb_release_group("g-new", "Newer EP", primary_type="EP"),
+        )
+    )
+    second = watch_artist(storage, _client(), "mbid-low", today=TODAY)
+    assert second.events_new == 1
+    assert second.events_filtered == 0
+
+
+def test_date_changed_on_a_filtered_type_raises_no_event(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    from encore.artistsettings import SettingsOverride
+
+    _add_watched_artist(storage, "key-1", "Low", "mbid-low")
+    storage.set_artist_settings("key-1", SettingsOverride(allow_primary=("album",)))
+    httpx_mock.add_response(json=mb_browse_response(mb_release_group("g-1", "Only")))
+    watch_artist(storage, _client(), "mbid-low", today=TODAY)
+    baseline = len(storage.list_events())
+
+    # An EP's date moved: recorded, but the artist allows albums only.
+    httpx_mock.add_response(
+        json=mb_browse_response(
+            mb_release_group("g-1", "Only"),
+            mb_release_group("g-2", "Moved EP", primary_type="EP", first_release_date="2030-01-01"),
+        )
+    )
+    result = watch_artist(storage, _client(), "mbid-low", today=TODAY)
+
+    # The moved date is recorded on the group row, but the event is gated:
+    # albums-only means an EP's schedule change is not news.
+    assert result.events_filtered == 1
+    assert result.events_new == 0 and result.events_upcoming == 0
+    assert len(storage.list_events()) == baseline
+
+
+def test_upcoming_announcements_respect_the_type_policy_too(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    # Announcements are news even at baseline — unless the type is one the
+    # listener opted out of; F10 gates every event kind uniformly.
+    _add_watched_artist(storage, "key-1", "Low", "mbid-low")
+    httpx_mock.add_response(
+        json=mb_browse_response(
+            mb_release_group(
+                "g-future-live",
+                "Future Live",
+                primary_type="Album",
+                secondary_types=("Live",),
+                first_release_date="2031-03-01",
+            ),
+        )
+    )
+    result = watch_artist(storage, _client(), "mbid-low", today=TODAY)
+    assert result.events_upcoming == 0
+    assert result.events_filtered == 1

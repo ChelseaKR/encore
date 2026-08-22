@@ -31,6 +31,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Per-artist and global watch settings — release types, muting, priority
+  (M3/F10).** The noise-control keystone, resolved in one new policy layer
+  (`encore.artistsettings`) that every consumer shares. **Types:** a
+  release-group reaches you only when its MusicBrainz type tags are all
+  opted in — albums-only by default (`encore settings default-types` to
+  change globally; `encore artists settings --allow-primary/--allow-secondary`
+  per artist). A live album needs both `album` and `live`; an unknown
+  future MusicBrainz tag blocks conservatively rather than spraying noise.
+  **Muting:** `--mute`, `--mute-until YYYY-MM-DD`, or `--unmute` suppresses
+  deliveries while events stay recorded — un-muting never replays what it
+  silenced (suppressed events settle without a send). **Priority:**
+  `--priority instant` breaks digest windows; `digest` waits even on
+  instant channels; normal follows each channel's mode. Filtered releases
+  still land in `release_groups` so the diff stays exact, counted as
+  `filtered=` in watch output; flipping a filter on starts from today,
+  never from yesterday's back catalog.
 - **A scheduled matching job closes the F2 automatic-path gap.** The F2
   CLI entry above closed the on-demand path and said plainly that "a
   scheduled match job (parity with sync/watch/notify) remains open." It is

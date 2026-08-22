@@ -344,3 +344,107 @@ def test_data_dir_errors_are_reported_not_raised(tmp_path: Path) -> None:
         ["channels", "test", "--data-dir", str(blocked), "--name", "x"],
     ):
         assert cli.main(argv) == 1
+
+
+# -- F10 per-artist and global watch settings ---------------------------------
+
+
+def _seed_artist_for_cli(storage: Storage, key: str, name: str) -> None:
+    from encore.models import Artist
+
+    with storage.session() as session:
+        session.add(Artist(plex_rating_key=key, name=name, library_key="1"))
+        session.commit()
+
+
+def test_artists_list_shows_status_and_settings_summaries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from encore.artistsettings import SettingsOverride
+    from encore.storage import Storage
+
+    storage = Storage(tmp_path)
+    _seed_artist_for_cli(storage, "k1", "Low")
+    storage.save_artist_match("k1", "Low", "auto", mbid="mbid-low")
+    storage.set_artist_settings("k1", SettingsOverride(priority="instant", muted=True))
+    storage.close()
+
+    assert cli.main(["artists", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Low" in out and "[auto]" in out
+    assert "tier=instant" in out and "muted" in out
+
+
+def test_artists_settings_round_trip_and_rejects_unknown_types(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from encore.storage import Storage
+
+    storage = Storage(tmp_path)
+    _seed_artist_for_cli(storage, "k1", "Low")
+    storage.close()
+
+    argv = ["artists", "settings", "--data-dir", str(tmp_path), "--artist-key", "k1"]
+    assert cli.main([*argv, "--allow-primary", "album,ep", "--priority", "digest"]) == 0
+    out = capsys.readouterr().out
+    assert "types=album,ep+none (override)" in out
+    assert "tier=digest" in out
+
+    # Read-modify-write: adding a mute keeps the type list.
+    assert cli.main([*argv, "--mute"]) == 0
+    out = capsys.readouterr().out
+    assert "muted" in out and "types=album,ep" in out
+
+    assert cli.main([*argv, "--allow-primary", "boxset"]) == 1
+    assert "boxset" in capsys.readouterr().err
+
+    assert (
+        cli.main(["artists", "settings", "--data-dir", str(tmp_path), "--artist-key", "nope"]) == 1
+    )
+
+
+def test_mute_and_mute_until_are_mutually_exclusive_at_the_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from encore.storage import Storage
+
+    storage = Storage(tmp_path)
+    _seed_artist_for_cli(storage, "k1", "Low")
+    storage.close()
+    argv = ["artists", "settings", "--data-dir", str(tmp_path), "--artist-key", "k1"]
+    assert cli.main([*argv, "--mute"]) == 0
+    assert cli.main([*argv, "--mute-until", "2026-12-01"]) == 0  # replaces the mute
+    assert cli.main([*argv, "--unmute"]) == 0
+    out = capsys.readouterr().out
+    assert "default" in out.splitlines()[-1]
+
+
+def test_global_settings_show_and_default_types(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["settings", "show", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "album" in out and "(none)" in out
+
+    assert (
+        cli.main(
+            [
+                "settings",
+                "default-types",
+                "--data-dir",
+                str(tmp_path),
+                "--primary",
+                "album,ep",
+                "--secondary",
+                "",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert "album,ep" in out
+
+    assert (
+        cli.main(["settings", "default-types", "--data-dir", str(tmp_path), "--primary", "junk"])
+        == 1
+    )

@@ -9,6 +9,13 @@ One cycle does three things, in order:
 3. **Digest channels:** once ``digest_interval_hours`` has elapsed, roll every
    due delivery for that channel into a single message.
 
+F10 layers per-artist priority over that cadence: an ``instant`` artist's
+events break through digest windows on any channel, a ``digest`` artist's
+wait for the window even on instant channels, and ``normal`` events follow
+the channel's mode exactly as before. Muted artists never reach this
+engine at all — `Storage.ensure_deliveries` settles their events without
+creating deliveries (un-muting must not replay history).
+
 Failure handling is the half of F4's acceptance that is easy to skip: a
 failed channel **retries with exponential backoff** (`_backoff_seconds`) and,
 after `MAX_ATTEMPTS`, the delivery goes terminal-``failed`` rather than
@@ -68,6 +75,7 @@ class DeliveryReport:
     failed: int = 0
     channels_skipped: int = 0
     events_settled: int = 0
+    muted_skipped: int = 0
 
 
 def _backoff_seconds(attempts: int) -> float:
@@ -213,6 +221,37 @@ def _channel_url(storage: Storage, channel: NotificationChannel) -> str | None:
         return None
 
 
+def _partition_by_priority(
+    storage: Storage,
+    due: list[Delivery],
+    views: dict[int, EventView],
+) -> tuple[list[Delivery], list[Delivery], list[Delivery]]:
+    """Split due deliveries by their artist's F10 priority tier.
+
+    Returns ``(force_instant, force_digest, normal)``. An ``instant``
+    artist breaks through digest windows on every channel; a ``digest``
+    artist waits for the window even on instant channels; ``normal`` —
+    including anything whose policy cannot be resolved, which must behave
+    exactly as it did before F10 — follows the channel's own mode.
+    """
+    mbids = {view.artist_mbid for view in views.values()}
+    policies = storage.effective_watch_settings_for_mbids(sorted(mbids)) if mbids else {}
+    force_instant: list[Delivery] = []
+    force_digest: list[Delivery] = []
+    normal: list[Delivery] = []
+    for delivery in due:
+        view = views.get(delivery.event_id)
+        policy = policies.get(view.artist_mbid) if view is not None else None
+        tier = policy.priority if policy is not None else "normal"
+        if tier == "instant":
+            force_instant.append(delivery)
+        elif tier == "digest":
+            force_digest.append(delivery)
+        else:
+            normal.append(delivery)
+    return force_instant, force_digest, normal
+
+
 def _run_channel(
     storage: Storage,
     channel: NotificationChannel,
@@ -232,14 +271,29 @@ def _run_channel(
         report.channels_skipped += 1
         return []
     views = storage.event_views_for([delivery.event_id for delivery in due])
-    deliver = _deliver_digest if channel.mode == "digest" else _deliver_instant
-    try:
-        deliver(storage, channel, url, sender, due, views, machine_identifier, now, report)
-    except Exception:
-        # A sender that raises something other than DeliveryError is a bug in
-        # that sender, not a reason to abandon every other channel this cycle.
-        logger.exception("channel %r raised during delivery; skipped this cycle", channel.name)
-        report.channels_skipped += 1
+    force_instant, force_digest, normal = _partition_by_priority(storage, due, views)
+    # The instant stream sends now regardless of mode: forced-instant
+    # artists first, then everything else on an instant channel.
+    instant_batch = force_instant + (normal if channel.mode == "instant" else [])
+    if instant_batch:
+        try:
+            _deliver_instant(
+                storage, channel, url, sender, instant_batch, views, machine_identifier, now, report
+            )
+        except Exception:
+            logger.exception("channel %r raised during delivery; skipped this cycle", channel.name)
+            report.channels_skipped += 1
+    # The rollup stream waits for the digest window on any channel:
+    # everything else on a digest channel, plus forced-digest artists.
+    rollup_batch = (normal if channel.mode == "digest" else []) + force_digest
+    if rollup_batch:
+        try:
+            _deliver_digest(
+                storage, channel, url, sender, rollup_batch, views, machine_identifier, now, report
+            )
+        except Exception:
+            logger.exception("channel %r raised during delivery; skipped this cycle", channel.name)
+            report.channels_skipped += 1
     return [delivery.event_id for delivery in due]
 
 
@@ -258,7 +312,8 @@ def run_delivery_cycle(
         sender = AppriseSender()
     if now is None:
         now = dt.datetime.now(dt.UTC)
-    report = DeliveryReport(enqueued=storage.ensure_deliveries(now))
+    created, muted_skipped = storage.ensure_deliveries(now)
+    report = DeliveryReport(enqueued=created, muted_skipped=muted_skipped)
     machine_identifier = storage.get_plex_machine_identifier()
     touched_events: list[int] = []
     for channel in storage.list_channels(enabled_only=True):
@@ -268,7 +323,7 @@ def run_delivery_cycle(
     report.events_settled = storage.settle_events(touched_events)
     logger.info(
         "delivery cycle: enqueued=%d sent=%d digests=%d retried=%d failed=%d "
-        "channels_skipped=%d settled=%d",
+        "channels_skipped=%d settled=%d muted_skipped=%d",
         report.enqueued,
         report.sent,
         report.digests_sent,
@@ -276,6 +331,7 @@ def run_delivery_cycle(
         report.failed,
         report.channels_skipped,
         report.events_settled,
+        report.muted_skipped,
     )
     return report
 
