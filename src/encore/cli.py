@@ -3,14 +3,14 @@
 `encore serve` runs the app under uvicorn; `encore plex configure` stores
 Plex credentials (token prompted or piped, never a CLI argument — flags leak
 into shell history); `encore sync` is the on-demand library sync (F1);
-`encore match` runs the F2 matching engine over synced-but-unmatched artists
+`encore match` runs one matching pass over synced-but-unmatched artists (F2)
 and `encore matches` works the review queue it fills; `encore watch` is the
 on-demand release-watch cycle (F3); `encore channels` manages Apprise
 notification destinations and `encore notify` runs one delivery cycle (F4);
-`encore feeds` mints and rotates the F5 feed URLs. The scheduled paths live
-in `encore.scheduler` — matching has no scheduled job yet (CHANGELOG, F2):
-`encore match` is the only way a freshly synced artist reaches the watch
-cycle until that lands.
+`encore feeds` mints and rotates the F5 feed URLs. Every on-demand command
+has a scheduled twin in `encore.scheduler`, running the same pass on an
+interval — `encore match` and the match scheduler share
+`run_matching_pass`, so the manual and automatic paths cannot drift.
 
 `encore feeds show` is the one place the feed token is deliberately printed:
 the URL *is* the capability, and handing it to the operator is this command's
@@ -41,9 +41,8 @@ from collections.abc import Callable
 # mypy treats as private to this module.
 import uvicorn as uvicorn
 
-from encore.matching.engine import MatchEngine, candidates_from_json
-from encore.matching.mb import MusicBrainzClient, MusicBrainzError
-from encore.matching.scoring import ArtistHints
+from encore.matching.engine import candidates_from_json, run_matching_pass
+from encore.matching.mb import MusicBrainzClient
 from encore.models import CHANNEL_MODES
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
@@ -276,15 +275,18 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 
 def _cmd_match(args: argparse.Namespace) -> int:
-    """Run one on-demand matching pass over synced-but-unmatched artists (F2).
+    """Run one matching pass over synced-but-unmatched artists (F2).
 
-    Skip-don't-queue, the same posture `encore watch` uses for MusicBrainz
-    (risk R8): one artist's failure is counted and the pass moves on rather
-    than wedging on it. No Plex-GUID hint is passed yet — the scoring
-    function accepts one (`ArtistHints.guid_mbid`) as a boost, never an
-    auto-accept, but nothing in this repo extracts an MBID out of a Plex
-    GUID yet, so a name-only match is the honest current behavior rather
-    than a silently-never-populated hint.
+    The same `run_matching_pass` the scheduled match job runs. Skip-don't-
+    queue, the same posture `encore watch` uses for MusicBrainz (risk R8):
+    one artist's failure is counted and the pass moves on rather than
+    wedging on it, and the next run — manual or scheduled — retries exactly
+    the failed ones because matched artists are excluded from the backlog.
+    No Plex-GUID hint is passed yet — the scoring function accepts one
+    (`ArtistHints.guid_mbid`) as a boost, never an auto-accept, but nothing
+    in this repo extracts an MBID out of a Plex GUID yet, so a name-only
+    match is the honest current behavior rather than a silently-never-
+    populated hint.
     """
     try:
         storage = Storage(args.data_dir)
@@ -293,30 +295,19 @@ def _cmd_match(args: argparse.Namespace) -> int:
         return 1
     client = MusicBrainzClient()
     try:
-        artists = storage.list_unmatched_artists()
-        if not artists:
-            print("No unmatched artists. Run `encore sync` first, or everything is matched.")
-            return 0
-        engine = MatchEngine(storage, client)
-        auto = pending = failed = 0
-        for artist in artists:
-            try:
-                row = engine.match_artist(artist.plex_rating_key, ArtistHints(name=artist.name))
-            except MusicBrainzError:
-                failed += 1
-                continue
-            if row.status == "auto":
-                auto += 1
-            else:
-                pending += 1
+        report = run_matching_pass(storage, client)
     finally:
         client.close()
         storage.close()
+    if report.candidates == 0:
+        print("No unmatched artists. Run `encore sync` first, or everything is matched.")
+        return 0
     print(
-        f"match complete: candidates={len(artists)} auto={auto} pending={pending} failed={failed}"
+        f"match complete: candidates={report.candidates} auto={report.auto} "
+        f"pending={report.pending} failed={report.failed}"
     )
-    if pending:
-        print(f"{pending} artist(s) need a decision — run `encore matches list`.")
+    if report.pending:
+        print(f"{report.pending} artist(s) need a decision — run `encore matches list`.")
     return 0
 
 

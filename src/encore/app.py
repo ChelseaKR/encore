@@ -1,8 +1,9 @@
 """The FastAPI app factory.
 
 Scope so far (F0 + F1 + F3 + F4 + F5): health endpoints, the storage layer,
-the three background schedulers (Plex sync, MusicBrainz release watch,
-notification delivery), and the token-gated standing feeds (RSS + iCal). The
+the background schedulers (Plex sync F1, MusicBrainz identity matching F2,
+MusicBrainz release watch F3, notification delivery F4), and the token-gated
+standing feeds (RSS + iCal). The
 feed routes are the app's first read surface for library content, and they
 ship *with* their access control: the unguessable token in the path is the
 capability, checked in constant time against the encrypted-at-rest stored
@@ -36,13 +37,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from encore import __version__
 from encore.feeds import ICAL_EVENT_LIMIT, RSS_EVENT_LIMIT, render_ical, render_rss
-from encore.scheduler import build_notify_scheduler, build_sync_scheduler, build_watch_scheduler
+from encore.scheduler import (
+    build_match_scheduler,
+    build_notify_scheduler,
+    build_sync_scheduler,
+    build_watch_scheduler,
+)
 from encore.secretstore import SecretDecryptionError
 from encore.storage import Storage, StorageError
 
 # readyz check name → app.state attribute holding the (optional) scheduler.
 _SCHEDULER_CHECKS = (
     ("sync_scheduler", "scheduler"),
+    ("match_scheduler", "match_scheduler"),
     ("watch_scheduler", "watch_scheduler"),
     ("notify_scheduler", "notify_scheduler"),
 )
@@ -177,12 +184,18 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.storage = Storage(data_dir)
         app.state.scheduler = build_sync_scheduler(app.state.storage)
+        app.state.match_scheduler = build_match_scheduler(app.state.storage)
         app.state.watch_scheduler = build_watch_scheduler(app.state.storage)
         app.state.notify_scheduler = build_notify_scheduler(app.state.storage)
         try:
             yield
         finally:
-            for attr in ("scheduler", "watch_scheduler", "notify_scheduler"):
+            for attr in (
+                "scheduler",
+                "match_scheduler",
+                "watch_scheduler",
+                "notify_scheduler",
+            ):
                 running = getattr(app.state, attr, None)
                 if running is not None:
                     running.shutdown(wait=False)

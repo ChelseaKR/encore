@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 
-from encore.matching.mb import ArtistCandidate, MusicBrainzClient
+from encore.matching.mb import ArtistCandidate, MusicBrainzClient, MusicBrainzError
 from encore.matching.scoring import (
     AMBIGUITY_MARGIN,
     AUTO_MATCH_THRESHOLD,
@@ -28,9 +29,58 @@ from encore.matching.scoring import (
 from encore.models import ArtistMatch
 from encore.storage import Storage
 
-__all__ = ["MatchEngine", "candidates_from_json"]
+__all__ = ["MatchEngine", "MatchingReport", "candidates_from_json", "run_matching_pass"]
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MatchingReport:
+    """Counts from one matching pass (identifiers deliberately absent).
+
+    The same shape `SyncReport` and `WatchReport` use: what INFO logging and
+    the CLI are allowed to say about a run over taste data — counts, never
+    names or MBIDs.
+    """
+
+    candidates: int = 0
+    auto: int = 0
+    pending: int = 0
+    failed: int = 0
+
+
+def run_matching_pass(storage: Storage, client: MusicBrainzClient) -> MatchingReport:
+    """Match every synced-but-unmatched artist once; skip-don't-queue on failure.
+
+    The one pass both `encore match` and the scheduled match job run, so the
+    on-demand and automatic paths cannot drift. Per-artist failures are
+    counted and skipped (risk R8 posture): one unreachable MusicBrainz must
+    not wedge the pass for the artists after it — and because an artist with
+    *any* existing decision is excluded by `Storage.list_unmatched_artists`,
+    the next run retries exactly the failed ones and no one else.
+    """
+    report = MatchingReport()
+    engine = MatchEngine(storage, client)
+    for artist in storage.list_unmatched_artists():
+        report.candidates += 1
+        try:
+            row = engine.match_artist(artist.plex_rating_key, ArtistHints(name=artist.name))
+        except MusicBrainzError:
+            # Counts only — no artist name, no key (no-outing lens).
+            report.failed += 1
+            continue
+        if row.status == "auto":
+            report.auto += 1
+        else:
+            report.pending += 1
+    logger.info(
+        "match pass: candidates=%d auto=%d pending=%d failed=%d",
+        report.candidates,
+        report.auto,
+        report.pending,
+        report.failed,
+    )
+    return report
 
 
 def _candidates_to_json(decision: MatchDecision) -> str:

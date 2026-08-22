@@ -16,7 +16,7 @@ from urllib.parse import quote, quote_plus
 import pytest
 from pytest_httpx import HTTPXMock
 
-from encore.matching.engine import MatchEngine, candidates_from_json
+from encore.matching.engine import MatchEngine, candidates_from_json, run_matching_pass
 from encore.matching.mb import MusicBrainzClient, RateLimiter
 from encore.matching.scoring import ArtistHints
 from encore.storage import Storage, StorageError
@@ -222,3 +222,75 @@ def test_matching_never_logs_or_sends_the_plex_token(
     assert sentinel_token.encode() not in request.content
     for header_value in request.headers.values():
         assert sentinel_token not in header_value
+
+
+def _pass_client() -> MusicBrainzClient:
+    """Return a client with no rate-limit wait, for pass-level tests."""
+    return MusicBrainzClient(rate_limiter=RateLimiter(min_interval=0), sleep=lambda _s: None)
+
+
+def _sync_artist(storage: Storage, rating_key: str, name: str) -> None:
+    """Insert one synced (non-tombstoned) artist with no match decision yet."""
+    from encore.models import Artist
+
+    with storage.session() as session:
+        session.add(Artist(plex_rating_key=rating_key, name=name, library_key="1"))
+        session.commit()
+
+
+def test_matching_pass_counts_auto_pending_and_skips_nothing(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    _sync_artist(storage, "key-1", "Low")
+    _sync_artist(storage, "key-2", "A Name Nobody Will Auto-match")
+    httpx_mock.add_response(json=mb_search_response(mb_artist("mb-low", "Low", 100)))
+    # A homonym split: two strong candidates within the ambiguity margin → pending.
+    httpx_mock.add_response(
+        json=mb_search_response(
+            mb_artist("mb-x1", "Mercury Rev", 98),
+            mb_artist("mb-x2", "Mercury Rev", 97),
+        )
+    )
+
+    report = run_matching_pass(storage, _pass_client())
+
+    assert report.candidates == 2
+    assert report.auto == 1
+    assert report.pending == 1
+    assert report.failed == 0
+    # Decisions are persisted exactly as `encore match` would leave them.
+    assert storage.get_artist_match("key-1") is not None
+    assert storage.get_artist_match("key-2") is not None
+
+
+def test_matching_pass_skip_dont_queue_on_musicbrainz_failure(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    _sync_artist(storage, "key-dead", "Failing Artist")
+    _sync_artist(storage, "key-live", "Low")
+    # First artist's search 500s; the pass must count it and move on.
+    httpx_mock.add_response(status_code=500)
+    httpx_mock.add_response(json=mb_search_response(mb_artist("mb-low", "Low", 100)))
+
+    report = run_matching_pass(storage, _pass_client())
+
+    assert report.candidates == 2
+    assert report.failed == 1
+    assert report.auto == 1
+    # The failed artist has no decision yet, so the next pass retries it —
+    # and only it.
+    remaining = storage.list_unmatched_artists()
+    assert [artist.plex_rating_key for artist in remaining] == ["key-dead"]
+
+
+def test_second_pass_over_a_matched_library_is_free(
+    storage: Storage, httpx_mock: HTTPXMock
+) -> None:
+    _sync_artist(storage, "key-1", "Low")
+    httpx_mock.add_response(json=mb_search_response(mb_artist("mb-low", "Low", 100)))
+    run_matching_pass(storage, _pass_client())
+
+    report = run_matching_pass(storage, _pass_client())
+
+    assert report.candidates == 0  # no requests left the host either
+    assert len(httpx_mock.get_requests()) == 1
