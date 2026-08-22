@@ -31,6 +31,8 @@ class FakeArtist:
     rating_key: str
     name: str
     guid: str | None = "plex://artist/000000000000000000000000"
+    # Lifetime plays (F9): rendered as the server's viewCount attribute.
+    play_count: int = 0
 
 
 @dataclass
@@ -73,11 +75,12 @@ def _artists_page_xml(library: FakeLibrary, start: int, size: int) -> str:
     items = []
     for artist in window:
         guid_attr = f" guid={quoteattr(artist.guid)}" if artist.guid else ""
+        plays_attr = f' viewCount="{artist.play_count}" ' if artist.play_count else ""
         items.append(
             f"<Directory ratingKey={quoteattr(artist.rating_key)} "
             f'key="/library/metadata/{artist.rating_key}/children"{guid_attr} '
             f'type="artist" title={quoteattr(artist.name)} index="1" '
-            f'addedAt="1" updatedAt="1"></Directory>'
+            f'{plays_attr}addedAt="1" updatedAt="1"></Directory>'
         )
     return (
         f'<MediaContainer size="{len(window)}" totalSize="{len(library.artists)}" '

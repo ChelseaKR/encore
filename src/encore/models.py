@@ -83,7 +83,9 @@ class Artist(SQLModel, table=True):
     one-migration-per-feature policy above. ``settings_json`` is the F10
     per-artist watch override (type allowlists, muting, priority) — a
     partial layer over the global defaults, parsed and validated by
-    `encore.artistsettings`, never read raw.
+    `encore.artistsettings`, never read raw. ``play_count`` is the F9
+    listening-history figure the server reports (lifetime plays); it is
+    weighting input, not identity data.
     """
 
     __tablename__ = "artists"
@@ -94,6 +96,7 @@ class Artist(SQLModel, table=True):
     plex_guid: str | None = Field(default=None)
     library_key: str = Field(index=True)
     settings_json: str | None = Field(default=None)
+    play_count: int = Field(default=0)
     first_seen_at: datetime = Field(default_factory=utcnow)
     last_seen_at: datetime = Field(default_factory=utcnow)
     removed_at: datetime | None = Field(default=None)

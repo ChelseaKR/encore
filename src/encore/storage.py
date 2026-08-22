@@ -190,6 +190,16 @@ def _migration_0008_watch_settings(connection: Connection) -> None:
         connection.exec_driver_sql("ALTER TABLE settings ADD COLUMN watch_defaults_json VARCHAR")
 
 
+def _migration_0009_play_counts(connection: Connection) -> None:
+    """v9 (F9): add ``artists.play_count`` (guarded — no-op on fresh)."""
+    SQLModel.metadata.create_all(connection)
+    artists_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(artists)")}
+    if "play_count" not in artists_columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE artists ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -201,6 +211,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0006_feed_token,
     _migration_0007_shared_release_groups,
     _migration_0008_watch_settings,
+    _migration_0009_play_counts,
 )
 
 
@@ -1108,6 +1119,23 @@ class Storage:
             }
             rows = list(session.exec(select(Artist).order_by(col(Artist.name))).all())
         return [(row, statuses.get(row.plex_rating_key)) for row in rows]
+
+    def listening_weights(self) -> dict[str, float]:
+        """F9 listening weight per live artist: plays normalized to 0..1.
+
+        The most-played artist weighs 1.0 and everyone else scales against
+        them; an artist with zero plays (or an entirely play-free library)
+        weighs 0.0, so consumers can degrade to unweighted behavior by
+        checking for an all-zero mapping rather than re-deriving it.
+        Purely local computation over counts the sync already fetched.
+        """
+        with self.session() as session:
+            artists = session.exec(select(Artist)).all()
+        live = [row for row in artists if row.removed_at is None]
+        top = max((row.play_count for row in live), default=0)
+        if top <= 0:
+            return {row.plex_rating_key: 0.0 for row in live}
+        return {row.plex_rating_key: row.play_count / top for row in live}
 
     # -- standing feeds (F5) ---------------------------------------------------
 

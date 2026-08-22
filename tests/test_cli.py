@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlmodel import select
 
 from encore import cli
 from encore.notify import DeliveryError, run_delivery_cycle
@@ -448,3 +449,26 @@ def test_global_settings_show_and_default_types(
         cli.main(["settings", "default-types", "--data-dir", str(tmp_path), "--primary", "junk"])
         == 1
     )
+
+
+def test_artists_list_shows_plays_and_weights(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # F9: weighting must be visible and explainable, never silent magic.
+    from encore.storage import Storage
+
+    storage = Storage(tmp_path)
+    _seed_artist_for_cli(storage, "k1", "Low")
+    with storage.session() as session:
+        from encore.models import Artist
+
+        row = session.exec(select(Artist).where(Artist.plex_rating_key == "k1")).first()
+        assert row is not None
+        row.play_count = 42
+        session.add(row)
+        session.commit()
+    storage.close()
+
+    assert cli.main(["artists", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "plays=42" in out and "listening-weight=1.00" in out
