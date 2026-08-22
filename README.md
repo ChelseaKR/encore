@@ -52,8 +52,9 @@ recommendable in public without a legality asterisk.
   with muting (forever or until a date) and per-artist priority tiers.
 - **Recommends** similar artists via ListenBrainz labs, weighted by your actual
   listening, with visible provenance ("similar to X, Y you already own") and one-command
-  dismiss/promote (`encore recommend`, `encore recommendations`). Watching new releases
-  *from* recommended artists you don't own yet is planned next (F8).
+  dismiss/promote (`encore recommend`, `encore recommendations`). Promoting a candidate
+  watches its new releases through the same alert pipeline — discovery is strictly
+  opt-in.
 
 ## Non-goals (hard, not aspirational)
 

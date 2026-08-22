@@ -31,6 +31,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Promoted recommendations join the watched library (M3/F8).** Promoting
+  a candidate (`encore recommendations promote --mbid …`) is the explicit
+  opt-in: its MBID joins the release-watch pool, so its new releases and
+  future-dated announcements flow through the same event → channel →
+  feed pipeline as owned music, rendered with the candidate's name even
+  though it has no Plex row (the calendar includes it too). Dismissing —
+  or dismissing after promoting — removes it from the pool again. A
+  dismissed or untouched candidate is never watched: discovery stays
+  strictly opt-in, capped at exactly the artists you chose.
 - **Similar-artist recommendations with visible provenance (M3/F7).** A
   weekly refresh (`$ENCORE_REC_INTERVAL_HOURS`, default 168; fifth
   scheduler with its `/readyz` heartbeat) seeds ListenBrainz labs'

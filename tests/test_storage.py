@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import select
 
+from encore.matching.mb import ReleaseGroupInfo
 from encore.storage import (
     DATA_DIR_ENV,
     DB_FILENAME,
@@ -317,4 +318,82 @@ def test_a_muted_artist_unmuted_later_does_not_replay_the_muted_release(tmp_path
     created, muted_skipped = storage.ensure_deliveries()
     assert created == 0  # the release stays history; only future ones page
     assert muted_skipped == 0
+    storage.close()
+
+
+def test_a_promoted_candidate_joins_the_watch_pool_and_renders(tmp_path: Path) -> None:
+    from encore.models import Recommendation
+
+    # F8: promotion is the opt-in. A promoted recommendation MBID is
+    # watched like owned music, its events render with the candidate's
+    # name, and its future dates reach the calendar — a dismissed or
+    # untouched candidate is never watched.
+    from encore.watch import watch_all_artists
+
+    storage = Storage(tmp_path)
+    _seed_owned_artist(storage, "key-1", "Owned", "mbid-owned")
+    with storage.session() as session:
+        session.add(
+            Recommendation(
+                mbid="mbid-promoted",
+                name="Promoted Candidate",
+                score=0.9,
+                status="promoted",
+            )
+        )
+        session.add(Recommendation(mbid="mbid-new", name="New Candidate", score=0.5, status="new"))
+        session.add(
+            Recommendation(mbid="mbid-dismissed", name="Dismissed", score=0.4, status="dismissed")
+        )
+        session.commit()
+
+    watched = storage.list_watched_artist_mbids()
+    assert "mbid-owned" in watched and "mbid-promoted" in watched
+    assert "mbid-new" not in watched and "mbid-dismissed" not in watched
+
+    # A new release from the promoted candidate flows through the pipeline.
+    class FakeBrowseClient:
+        def close(self) -> None:
+            pass
+
+        def browse_release_groups(self, artist_mbid: str) -> list[ReleaseGroupInfo]:
+            if artist_mbid == "mbid-promoted":
+                return [
+                    ReleaseGroupInfo(
+                        mbid="g-prom",
+                        title="Debut",
+                        primary_type="Album",
+                        secondary_types=(),
+                        first_release_date="2030-01-01",
+                    )
+                ]
+            return []
+
+    report = watch_all_artists(storage, FakeBrowseClient())  # type: ignore[arg-type]
+    assert report.events_upcoming == 1  # future-dated → announcement at baseline
+    views = storage.list_event_views()
+    assert len(views) == 1
+    assert views[0].artist_name == "Promoted Candidate"
+    assert views[0].plex_rating_key is None  # no Plex row exists
+
+    # The calendar includes it too.
+    upcoming = storage.list_upcoming_releases()
+    names = {view.artist_name: view for view in upcoming}
+    assert "Promoted Candidate" in names
+    storage.close()
+
+
+def test_dismissed_candidates_never_join_the_watch_pool(tmp_path: Path) -> None:
+    from encore.models import Recommendation
+
+    storage = Storage(tmp_path)
+    with storage.session() as session:
+        session.add(Recommendation(mbid="m-x", name="X", status="new"))
+        session.commit()
+
+    assert storage.list_watched_artist_mbids() == []
+    storage.set_recommendation_status("m-x", "promoted")
+    assert storage.list_watched_artist_mbids() == ["m-x"]
+    storage.set_recommendation_status("m-x", "dismissed")
+    assert storage.list_watched_artist_mbids() == []  # demotion unwatches
     storage.close()
