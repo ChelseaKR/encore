@@ -146,8 +146,9 @@ statute.
 probe since F0 (M1, 2026-07-11) and carries the scheduler-heartbeat check for
 all four schedulers since the F2 match job landed (sync, match, watch,
 notify — a started-then-dead scheduler is unready; a disabled or
-credential-gated one is idle, not a failure). Structured JSON logs with secret/PII redaction, RED metrics
-per route, and `slos/encore.yaml` (poll-freshness SLO) are specified now and
+credential-gated one is idle, not a failure). Structured JSON logs with secret/PII redaction are active; **RED metrics per route landed 2026-08-22**
+(`encore.metrics`: in-process registry, `/metrics` exposition, route-template
+labels — the debt recorded here as "due" is paid); `slos/encore.yaml` (poll-freshness SLO) are specified now and
 instantiated as the routes and pollers they measure land (M1–M2) — see
 `slos/encore.yaml` for the declared target, schema-validated on every `make verify`
 (`make slo-check`, OBS-14).

@@ -37,6 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from encore import __version__
 from encore.feeds import ICAL_EVENT_LIMIT, RSS_EVENT_LIMIT, render_ical, render_rss
+from encore.metrics import METRICS_REGISTRY, RedMetricsMiddleware, render_prometheus
 from encore.scheduler import (
     build_match_scheduler,
     build_notify_scheduler,
@@ -231,10 +232,26 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
 
     _register_opaque_errors(app)
 
+    # RED metrics (OBS-11, the roadmap's "due" debt): every HTTP request is
+    # observed into the process-global registry under its route TEMPLATE —
+    # never the raw path, which for the feed routes carries a capability
+    # token. Exposed at /metrics below in Prometheus text format.
+    app.add_middleware(RedMetricsMiddleware)
+
     @app.get("/livez")
     def livez() -> dict[str, str]:
         # Deliberately dependency-free: process-is-up only (OBS-19).
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    def metrics() -> Response:
+        # Prometheus text exposition. Unauthenticated by design: labels are
+        # route templates, methods, and status codes only — no taste data,
+        # no capability material. See encore.metrics for the threat notes.
+        return Response(
+            content=render_prometheus(METRICS_REGISTRY),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     @app.get("/readyz")
     def readyz() -> JSONResponse:
