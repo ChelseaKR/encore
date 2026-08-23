@@ -7,6 +7,16 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 
 FROM python:3.12-slim
+# SEC-28: `python:3.12-slim`'s published layer lags Debian security fixes —
+# Trivy flagged CVE-2026-53612/53613/53614/53615 (util-linux mount TOCTOU /
+# SUID nosuid-noexec bypass) still present in the base image as of 2026-08-22.
+# Upgrading just this source package (rather than a blanket `apt-get upgrade`)
+# keeps the fix scoped and the layer small; re-run this if Trivy finds the
+# next one.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade \
+        util-linux bsdutils libblkid1 libmount1 libsmartcols1 liblastlog2-2 \
+    && rm -rf /var/lib/apt/lists/*
 # Create /data (the documented volume mountpoint, README §install) owned by the
 # app user BEFORE the VOLUME declaration: a named volume initialized from a
 # mountpoint that doesn't exist in the image is created root-owned, and the
