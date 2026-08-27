@@ -7,6 +7,28 @@ COPY src ./src
 RUN pip install --no-cache-dir .
 
 FROM python:3.12-slim
+# SEC-28: take Debian's published security updates at build time.
+#
+# `python:3.12-slim` is rebuilt on its own cadence, so between a Debian security
+# upload and the next base-image push the tag ships packages Debian has already
+# fixed. Trivy runs with `--ignore-unfixed`, so exactly those packages — fix
+# available, fix not in the image — are what turns the Container CVE scan red,
+# on a change nobody made. Upgrading here closes that window.
+#
+# Deliberately not a hand-listed set of packages. The window moves: the scan
+# first went red on util-linux (CVE-2026-53612/53613/53614/53615), and three
+# days later the base image had picked util-linux up on its own while openssl
+# CVE-2026-14456 had taken its place. A list pinned to the CVE of the week is
+# stale before it merges; "whatever Debian has fixed" is not.
+#
+# This does mean the runtime layer is not byte-reproducible across time. That
+# was already true of a floating `python:3.12-slim` tag, and the reproducibility
+# the project actually pins is the Python layer (`uv.lock`, `--frozen`), which
+# this does not touch.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 # Create /data (the documented volume mountpoint, README §install) owned by the
 # app user BEFORE the VOLUME declaration: a named volume initialized from a
 # mountpoint that doesn't exist in the image is created root-owned, and the
