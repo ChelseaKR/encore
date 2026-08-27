@@ -332,6 +332,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **The image takes Debian's published security updates at build time
+  (2026-08-26).** The runtime stage now runs `apt-get upgrade` before dropping
+  to the non-root user. `python:3.12-slim` is rebuilt on its own cadence, so
+  between a Debian security upload and the next base-image push the tag ships
+  packages Debian has already fixed — and because Trivy runs with
+  `--ignore-unfixed`, exactly those packages are what turns the SEC-28
+  Container CVE scan red. It first went red on `main` on 2026-08-22 with 36
+  HIGH findings across the `util-linux` binaries
+  (CVE-2026-53612/53613/53614/53615, `mount` TOCTOU and a SUID
+  nosuid/noexec bypass) and stayed red for four days. Deliberately not a
+  hand-listed set of packages: by 2026-08-26 the base image had picked
+  util-linux up on its own and openssl CVE-2026-14456 (QUIC unbounded memory
+  growth, HIGH) had taken its place, so a list pinned to the CVE of the week
+  is stale before it merges. The image runs as `encore` (uid 10001) exactly
+  as before; the Python layer is untouched and stays pinned by `uv.lock`.
+
 - **`cryptography` raised to `>=50,<51` (2026-08-04).** The locked 49.0.0 picked
   up GHSA-g6cj-pr64-35w5 (CVSS 8.2, High) after the 2026-08-01 CI run, so both
   `pip-audit` and `osv-scanner` — and therefore `make verify` and CI — were red
