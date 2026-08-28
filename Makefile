@@ -45,6 +45,13 @@ security: ## SAST + dependency + secret scans (SEC-07/11/13/17)
 	uv run pip-audit
 	osv-scanner scan source --lockfile uv.lock
 	gitleaks detect --source . --config .gitleaks.toml --no-banner --redact
+	# History mode (above) cannot see a secret that is written but not yet
+	# committed: measured exit 0 with a live-shaped AWS key sitting in the
+	# working tree. CI is covered because it scans an already-committed tree
+	# with fetch-depth: 0 — but the local `make verify` a contributor runs
+	# BEFORE committing was not, and the pre-commit hook only helps if they
+	# ran `uvx pre-commit install`. Scan the working tree too (~0.4s).
+	gitleaks detect --source . --config .gitleaks.toml --no-banner --redact --no-git
 	uvx --from semgrep==1.166.0 semgrep scan \
 		--config .semgrep-rules --config p/default --config p/python \
 		--severity ERROR --error --metrics off --disable-nosem src tests
