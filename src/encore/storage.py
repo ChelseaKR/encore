@@ -1396,6 +1396,15 @@ class Storage:
         stored announcements drop off the calendar.
         Full ISO dates compare correctly as text, so the cut-off is SQL;
         rows are ordered by date then title.
+
+        The F10 release-type policy applies here too. It is enforced at
+        event-creation time, which RSS and notifications inherit for free (a
+        filtered group never gets a ``ReleaseEvent`` row), but this read model
+        goes to ``release_groups`` directly — deliberately, so a ``date_changed``
+        moves the calendar entry instead of duplicating it — and so bypassed the
+        filter entirely (issue #34). Muting is *not* applied: muting suppresses
+        deliveries only and feeds stay truthful (`artistsettings`), whereas the
+        type filter is supposed to suppress the release everywhere.
         """
         if today is None:
             today = utcnow().date()
@@ -1403,6 +1412,9 @@ class Storage:
             rows = self._upcoming_owned_rows(session, today) + self._upcoming_promoted_rows(
                 session, today
             )
+        # One batched resolve for every identity on the calendar, rather than a
+        # per-row lookup (issue #34).
+        policies = self.effective_watch_settings_for_mbids([group.artist_mbid for group, _ in rows])
         views_by_group_mbid: dict[str, UpcomingReleaseView] = {}
         for group, artist_name in rows:
             if group.mbid in views_by_group_mbid:
@@ -1416,6 +1428,11 @@ class Storage:
             secondary = (
                 tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
             )
+            if not policies[group.artist_mbid].passes(group.primary_type, secondary):
+                # The same predicate `watch_artist` applies to events — one
+                # policy, applied consistently across notifications, RSS and
+                # iCal, instead of two read paths disagreeing.
+                continue
             views_by_group_mbid[group.mbid] = UpcomingReleaseView(
                 release_group_mbid=group.mbid,
                 title=group.title,

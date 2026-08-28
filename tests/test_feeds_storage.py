@@ -177,7 +177,12 @@ def test_upcoming_excludes_unwatched_artists(tmp_path: Path) -> None:
 def test_upcoming_carries_secondary_types_through_to_the_view(tmp_path: Path) -> None:
     # The JSON-encoded column must come back as the tuple the renderer needs,
     # or every announced live record silently becomes a plain "Album".
+    # `live` and `compilation` are opted in explicitly: since issue #34 the
+    # calendar honours the F10 type policy, and under the albums-only default
+    # this group is correctly absent — which is what this test used to prove
+    # was broken without meaning to.
     storage = Storage(tmp_path)
+    storage.set_watch_default_types(allow_secondary=("live", "compilation"))
     _seed_watched_artist(storage)
     _seed_group(
         storage,
@@ -188,6 +193,22 @@ def test_upcoming_carries_secondary_types_through_to_the_view(tmp_path: Path) ->
     (upcoming,) = storage.list_upcoming_releases(today=TODAY)
     storage.close()
     assert upcoming.secondary_types == ("Live", "Compilation")
+
+
+def test_upcoming_omits_a_secondary_type_the_policy_excludes(tmp_path: Path) -> None:
+    # Companion to the test above and the iCal half of issue #34: with the
+    # albums-only default in force, the same Live/Compilation announcement is
+    # absent from the calendar rather than silently present.
+    storage = Storage(tmp_path)
+    _seed_watched_artist(storage)
+    _seed_group(
+        storage,
+        "aaaaaaaa-0000-0000-0000-000000000001",
+        "2026-09-15",
+        secondary_types=("Live", "Compilation"),
+    )
+    assert storage.list_upcoming_releases(today=TODAY) == []
+    storage.close()
 
 
 def test_upcoming_deduplicates_a_double_matched_mbid(tmp_path: Path) -> None:

@@ -467,6 +467,63 @@ def test_opting_a_promoted_artist_in_lets_the_single_through(tmp_path: Path) -> 
     storage.close()
 
 
+def test_type_filtered_releases_stay_off_the_calendar(tmp_path: Path) -> None:
+    from encore.models import Recommendation
+    from encore.watch import watch_all_artists
+
+    # Regression, issue #34. The F10 type filter is enforced at event-creation
+    # time, so RSS and notifications inherit it for free (a filtered group never
+    # gets a ReleaseEvent row). The iCal feed reads `release_groups` directly —
+    # a deliberate read model, so a date change MOVES the calendar entry rather
+    # than duplicating it (models.UpcomingReleaseView) — and that bypassed the
+    # filter entirely. A user who kept the albums-only default to avoid single/
+    # EP noise still got those releases on their calendar, silently.
+    storage = Storage(tmp_path)
+    _seed_owned_artist(storage, "key-1", "Owned", "mbid-owned")
+    with storage.session() as session:
+        session.add(Recommendation(mbid="mbid-promoted", name="Promoted", status="promoted"))
+        session.commit()
+
+    report = watch_all_artists(storage, _SingleOnlyBrowseClient())  # type: ignore[arg-type]
+    assert report.events_filtered == 2
+    # The groups ARE recorded — the diff must stay exact so a later opt-in
+    # starts from truth. They simply must not reach the calendar.
+    assert len(storage.list_release_groups("mbid-owned")) == 1
+    assert storage.list_upcoming_releases() == []
+    storage.close()
+
+
+def test_opting_in_puts_the_release_back_on_the_calendar(tmp_path: Path) -> None:
+    from encore.watch import watch_all_artists
+
+    # The other direction: the calendar filter is the policy speaking, not a
+    # blanket suppression of singles. Opt singles in and the entry appears.
+    storage = Storage(tmp_path)
+    storage.set_watch_default_types(allow_primary=("album", "single"))
+    _seed_owned_artist(storage, "key-1", "Owned", "mbid-owned")
+
+    watch_all_artists(storage, _SingleOnlyBrowseClient())  # type: ignore[arg-type]
+    upcoming = storage.list_upcoming_releases()
+    assert [view.title for view in upcoming] == ["B-side"]
+    storage.close()
+
+
+def test_calendar_filter_follows_a_per_artist_override(tmp_path: Path) -> None:
+    from encore.artistsettings import SettingsOverride
+    from encore.watch import watch_all_artists
+
+    # Per-artist opt-in, global default untouched: only the opted-in artist's
+    # single reaches the calendar.
+    storage = Storage(tmp_path)
+    _seed_owned_artist(storage, "key-1", "Opted In", "mbid-in")
+    _seed_owned_artist(storage, "key-2", "Default", "mbid-out")
+    storage.set_artist_settings("key-1", SettingsOverride(allow_primary=("album", "single")))
+
+    watch_all_artists(storage, _SingleOnlyBrowseClient())  # type: ignore[arg-type]
+    assert [view.artist_name for view in storage.list_upcoming_releases()] == ["Opted In"]
+    storage.close()
+
+
 def test_dismissed_candidates_never_join_the_watch_pool(tmp_path: Path) -> None:
     from encore.models import Recommendation
 
