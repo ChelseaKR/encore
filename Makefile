@@ -55,7 +55,7 @@ security: ## SAST + dependency + secret scans (SEC-07/11/13/17)
 	uvx --from semgrep==1.166.0 semgrep scan \
 		--config .semgrep-rules --config p/default --config p/python \
 		--severity ERROR --error --metrics off --disable-nosem src tests
-	uvx --from semgrep==1.166.0 semgrep test .semgrep-rules
+	@./scripts/semgrep-test-gate.sh
 
 responsible: ## Stage-8 responsible-tech guards: read-only Plex, no-secrets-in-logs, no-outing (M1, DoD §privacy)
 	uv run pytest -q -m "read_only_plex or no_secrets_in_logs or no_outing"
