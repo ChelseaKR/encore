@@ -32,13 +32,20 @@ pull request that violates it will be closed and, if needed, the history scrubbe
 ## Getting set up
 
 Encore targets Python 3.12+ and uses [`uv`](https://docs.astral.sh/uv/) for a
-reproducible, frozen environment:
+reproducible, locked environment:
 
 ```sh
 make install
 ```
 
 Run `make help` to see every target.
+
+The full gate also shells out to tools that are not Python dependencies, so
+`make verify` needs these on your `PATH`: `gitleaks`, `osv-scanner`, `shellcheck`,
+`docker`, and `trivy`. Each gate fails closed with an actionable message when its
+tool is missing — none of them skip. `trivy` and `docker` back the container stage
+(build, CVE scan, `/livez` bring-up), which is the stage that has most often failed
+in CI, so it is worth having locally rather than discovering it on a pull request.
 
 ## The merge gate
 
@@ -50,7 +57,7 @@ make verify
 
 `make verify` runs **format-check + lint + type + test/coverage + security +
 todo-gate** — the exact same targets `ci.yml` and `release.yml` invoke, on the
-same pinned (`uv sync --frozen`) toolchain, so green locally means green in CI:
+same pinned (`uv sync --locked`) toolchain, so green locally means green in CI:
 there is no second, drifted reimplementation of the gate (CQ-09, CICD-27).
 
 | Gate | Command | What it checks |
@@ -58,8 +65,10 @@ there is no second, drifted reimplementation of the gate (CQ-09, CICD-27).
 | Format + lint | `make lint` | `ruff format --check` + `ruff check`: correctness, security (bandit rules), import hygiene, cyclomatic complexity (≤10) |
 | Type | `make type` | `mypy --strict` over `src/encore` |
 | Test + coverage | `make cov` | pytest; branch coverage ≥85% |
-| Security | `make security` | pip-audit (vulnerable deps, against the *locked* env) + gitleaks (secret scan) |
+| Security | `make security` | Semgrep (`p/default`, `p/python`, the custom no-sensitive-log rule, plus `scripts/semgrep-test-gate.sh` proving that rule's own tests ran) + pip-audit + osv-scanner (both against the *locked* env) + gitleaks over **both** git history and the working tree |
 | TODO gate | `make todo-gate` | every `TODO`/`FIXME`/`HACK` names a `#issue` or an `M0`–`M4` milestone |
+| External refs | `make external-refs` | no committed file gains a reference to a path outside this repository (issue #22; ratchet against `.external-refs.yml`) |
+| Container (stage 9) | `make container-verify` | `docker build` + Trivy CVE scan (CRITICAL/HIGH, fixed-only) + `/livez` bring-up — the same target `ci.yml` runs, needs `docker` and `trivy` on `PATH` and fails closed without them |
 
 Cross-cutting rigor lives once in the portfolio's private `STANDARDS/`
 (fetched at CI time via `.github/workflows/standards.yml`, never committed

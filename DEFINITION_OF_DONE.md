@@ -8,11 +8,19 @@ floors, the gate model, the security posture) lives once in the portfolio's priv
 target values live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 > **The one command that proves it:** `make verify` reproduces the full CI gate set
-> locally — `format+lint · type · test (≥85% branch) · security · todo-gate`, plus
-> a11y once the UI exists (M2) and the no-outing/read-only-Plex guards once Plex
-> sync exists (M1). It is the same command `ci.yml` and `release.yml` invoke, not a
-> parallel reimplementation. A change is not done until `make verify` is green. A
+> locally — `format+lint · type · test (≥85% branch) · security · responsible ·
+> todo-gate · slo/citation/i18n schema · external-refs · wheel · container
+> (build + Trivy CVE scan + `/livez` bring-up)` — plus a11y once the UI exists (M2).
+> It is the same command `ci.yml` and `release.yml` invoke, not a parallel
+> reimplementation. A change is not done until `make verify` is green. A
 > *milestone* is not done until it is green on `main`.
+>
+> The container stage is listed explicitly because it used to be missing here and
+> present in `ci.yml`, which made this paragraph untrue in the direction that costs
+> the most: `make verify` went green on trees whose image CI then failed on a real
+> HIGH CVE. Running the full gate now needs `docker` and `trivy` on `PATH`, the same
+> way `make security` already needs `osv-scanner` and `gitleaks`; it fails closed
+> with an actionable message rather than skipping.
 
 ## Acceptance criteria (every PR)
 

@@ -91,6 +91,15 @@ jobs:
           OSV=2.4.0
           curl -sSfL -o /usr/local/bin/osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV}/osv-scanner_linux_amd64"
           chmod +x /usr/local/bin/osv-scanner
+      - name: Install trivy (pinned, matches ci.yml and the Makefile)
+        # `make verify` now composes `container-verify` (docker build + Trivy CVE
+        # scan + /livez bring-up), so the re-verify job needs the same scanner CI
+        # and a contributor use. Keep this version in step with ci.yml.
+        run: |
+          TRIVY=0.74.0
+          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY}/trivy_${TRIVY}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          chmod +x /usr/local/bin/trivy
       - name: CHANGELOG carries a section for this tag (REL-10)
         # A release must not tag a commit whose CHANGELOG has no matching
         # `## [X.Y.Z]` section. The verified tag is routed through the
@@ -108,7 +117,7 @@ jobs:
           }
       - name: make install
         run: make install
-      - name: make verify — lint + type + cov + security + todo-gate + slo/citation checks + wheel
+      - name: make verify — lint + type + cov + security + todo-gate + slo/citation/external-refs checks + wheel + container
         run: make verify
 
   build-sign-publish:
@@ -152,12 +161,18 @@ jobs:
           TAG: ${{ needs.verify-at-tag.outputs.release_tag }}
         run: docker build -t "ghcr.io/chelseakr/encore:${TAG}" .
       - name: Container CVE scan (Trivy, SEC-28) — gate the release, not just CI
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        with:
-          image-ref: "ghcr.io/chelseakr/encore:${{ needs.verify-at-tag.outputs.release_tag }}"
-          severity: "CRITICAL,HIGH"
-          exit-code: "1"
-          ignore-unfixed: true
+        # Scans the *published* tag, which `make container-scan` (run against
+        # `encore:verify` in verify-at-tag) does not build. Flags are deliberately
+        # identical to the Makefile target's — if you change one, change both.
+        env:
+          IMAGE: "ghcr.io/chelseakr/encore:${{ needs.verify-at-tag.outputs.release_tag }}"
+        run: |
+          TRIVY=0.74.0
+          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY}/trivy_${TRIVY}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          chmod +x /usr/local/bin/trivy
+          trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
+            --scanners vuln --skip-version-check "${IMAGE}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assets

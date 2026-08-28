@@ -4,6 +4,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check i18n-check i18n-extract wheel serve verify clean \
+        container-tools container-build container-scan container-bringup container-verify \
         external-refs
 
 help: ## Show this help
@@ -84,13 +85,67 @@ wheel: ## Build sdist + wheel (CQ-10) — proves the package builds, container i
 todo-gate: ## Fail on TODO/FIXME/HACK with no author + issue-or-milestone ref (CQ-34/35)
 	@./scripts/todo-gate.sh
 
+# ---------------------------------------------------------------------------
+# Stage 9 (container): build + CVE scan + bring-up.
+#
+# These exist because `make verify` previously could not reproduce them, while
+# five documents claimed it reproduced the whole CI gate. ci.yml's `build` job
+# ran `docker build`, a Trivy scan with `exit-code: 1`, and a `/livez` probe;
+# no Makefile target did any of the three. The Trivy step is the one that has
+# actually failed in CI (SEC-28, eight of the last twenty runs), so the single
+# gate with a real failure history was the one a contributor could not run.
+# Keep these flags identical to ci.yml's trivy-action inputs: divergence here
+# recreates exactly the drift this closes.
+# ---------------------------------------------------------------------------
+
+# Overridable so a caller can scan a specific build without clobbering a tag.
+IMAGE ?= encore:verify
+BRINGUP_NAME ?= encore-verify-run
+BRINGUP_PORT ?= 8321
+
+container-tools: ## Fail closed when the Stage 9 toolchain is absent (never skip silently)
+	@command -v docker >/dev/null 2>&1 || { \
+	  echo "container gate: 'docker' not found. Stage 9 (build + Trivy CVE scan + /livez" >&2; \
+	  echo "  bring-up) is part of the merge gate because CI runs it and it is the gate" >&2; \
+	  echo "  that has actually failed. Install Docker; do not skip this." >&2; exit 1; }
+	@docker info >/dev/null 2>&1 || { \
+	  echo "container gate: docker is installed but the daemon is not responding." >&2; exit 1; }
+	@command -v trivy >/dev/null 2>&1 || { \
+	  echo "container gate: 'trivy' not found. Install it (brew install trivy) — the CVE" >&2; \
+	  echo "  scan is merge-blocking in ci.yml and must be reproducible locally." >&2; exit 1; }
+
+container-build: container-tools ## Build the OCI image (proves the Dockerfile builds)
+	docker build -t $(IMAGE) .
+
+container-scan: container-build ## Trivy CVE scan — CRITICAL/HIGH, fixed-only (SEC-28)
+	trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
+		--scanners vuln --skip-version-check $(IMAGE)
+
+container-bringup: container-build ## Start the image and probe /livez (QM-08, OBS-19)
+	@docker rm -f $(BRINGUP_NAME) >/dev/null 2>&1 || true
+	@docker run -d --name $(BRINGUP_NAME) -p $(BRINGUP_PORT):8321 $(IMAGE) >/dev/null
+	@rc=1; for _ in $$(seq 1 40); do \
+	  if curl -sf http://127.0.0.1:$(BRINGUP_PORT)/livez >/dev/null 2>&1; then rc=0; break; fi; \
+	  sleep 0.5; \
+	done; \
+	if [ $$rc -ne 0 ]; then \
+	  echo "container-bringup: FAIL — $(IMAGE) never answered /livez" >&2; \
+	  docker logs $(BRINGUP_NAME) >&2 2>&1 || true; \
+	else \
+	  echo "container-bringup: OK — /livez answered"; \
+	fi; \
+	docker rm -f $(BRINGUP_NAME) >/dev/null 2>&1 || true; \
+	exit $$rc
+
+container-verify: container-scan container-bringup ## Stage 9 end to end
+
 serve: ## Run the dev server
 	uv run encore serve
 
 # The full gate. Determinism + reproducibility: same inputs, same result, every run.
 # CI runs this exact target (ci.yml/release.yml) — there is no second, drifted
 # implementation of "the merge gate" anywhere (CICD-27).
-verify: lint type cov security responsible todo-gate slo-check citation-check i18n-check external-refs wheel ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation/i18n schema checks + external-refs ratchet + wheel build)
+verify: lint type cov security responsible todo-gate slo-check citation-check i18n-check external-refs wheel container-verify ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation/i18n schema checks + wheel build + stage-9 container build/CVE-scan/bring-up)
 	@echo "verify: all gates green"
 
 clean: ## Remove caches and build artifacts

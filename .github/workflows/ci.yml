@@ -2,9 +2,18 @@ name: ci
 
 # Agility: every push and PR runs the full merge gate. Reproducibility: the gate is
 # the same `make` targets a contributor runs locally, on a pinned toolchain — CI
-# calls `make install`/`make lint`/`make type`/`make cov`/`make security`, the exact
-# targets `make verify` composes, so there is no second, drifted reimplementation
-# of the gate (CQ-09, CICD-27). `release.yml`'s `verify-at-tag` runs the literal
+# calls `make install`/`make lint`/`make type`/`make cov`/`make security`/
+# `make container-verify`, the exact targets `make verify` composes, so there is no
+# second, drifted reimplementation of the gate (CQ-09, CICD-27).
+#
+# That claim used to be false in one specific and expensive way. Stage 9 below
+# (docker build + Trivy CVE scan + /livez bring-up) existed ONLY here: no Makefile
+# target ran a container, `make verify` never scanned an image, and Trivy's
+# severity/exit-code/ignore-unfixed lived as trivy-action inputs. Trivy is the gate
+# that has actually failed — eight of the last twenty runs (SEC-28) — so the one
+# stage with a real failure history was the one a contributor could not reproduce:
+# `make verify` reported "all gates green" on trees CI then rejected. Stage 9 is now
+# `make container-verify`, composed into `make verify` like every other stage. `release.yml`'s `verify-at-tag` runs the literal
 # `make verify` in one non-matrixed job; here the same targets are split across two
 # jobs so gitleaks can get full git history (`fetch-depth: 0`) without paying that
 # clone cost on every matrix leg.
@@ -62,9 +71,13 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Install (uv sync --frozen — CQ-09)
+      - name: Install (uv sync --locked — CQ-09)
         run: make install
       - name: Stage 1-2 — format + lint
+        # Covers src, tests AND scripts (ruff), plus shellcheck over the shell
+        # gates. shellcheck ships in the ubuntu-latest runner image; if it ever
+        # stops shipping, `make lint` fails on the missing binary rather than
+        # skipping the shell gates silently.
         run: make lint
       - name: Stage 3 — type (mypy strict)
         run: make type
@@ -105,7 +118,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Install (uv sync --frozen — CQ-09)
+      - name: Install (uv sync --locked — CQ-09)
         run: make install
       - name: Install gitleaks (pinned, matches .pre-commit-config.yaml)
         run: |
@@ -119,7 +132,7 @@ jobs:
           chmod +x /usr/local/bin/osv-scanner
       - name: SAST + dependency + secret scans (one local/CI/release target)
         # `make security` — the identical target `make verify` composes, run against
-        # the frozen-synced env `uv.lock` describes (SEC-11/13), not a separately
+        # the locked-synced env `uv.lock` describes (SEC-11/13), not a separately
         # pip-resolved one. osv-scanner reads `uv.lock` directly (second engine, B5).
         run: make security
 
@@ -136,31 +149,24 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
-      - name: Build image (not pushed — proves the Dockerfile builds)
-        run: docker build -t encore:ci .
-      - name: Container CVE scan (Trivy, SEC-28)
-        # Runs on every build, not just at first tagged release — the control's
-        # scope is "every Dockerfile repo" and this image builds on every push
-        # already. This is what turns the Tier-1 `container_cve_scan` check from a
-        # false green (a "Trivy" word in a release.yml TODO comment) into a real one.
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
-        with:
-          image-ref: "encore:ci"
-          severity: "CRITICAL,HIGH"
-          exit-code: "1"
-          ignore-unfixed: true
-      - name: Bring-up check — start the container and probe /livez (QM-08, OBS-19)
+      - name: Install trivy (pinned — same binary and flags `make container-scan` runs)
+        # Installed as a pinned binary rather than via trivy-action, for the same
+        # reason gitleaks and osv-scanner are installed that way in the security
+        # job: the scan must be one implementation that a contributor can run.
+        # trivy-action took its severity/exit-code/ignore-unfixed as workflow
+        # inputs, which made the CVE gate exist ONLY in CI — `make verify` was
+        # green on trees CI rejected. Keep this version in step with the Makefile.
         run: |
-          docker run -d --name encore-ci -p 8321:8321 encore:ci
-          for _ in $(seq 1 20); do
-            if curl -sf http://127.0.0.1:8321/livez; then
-              echo; echo "livez OK"; exit 0
-            fi
-            sleep 0.5
-          done
-          echo "encore:ci never became ready" >&2
-          docker logs encore-ci >&2 || true
-          exit 1
+          TRIVY=0.74.0
+          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY}/trivy_${TRIVY}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          chmod +x /usr/local/bin/trivy
+      - name: Stage 9 — container build + CVE scan + bring-up (SEC-28, QM-08, OBS-19)
+        # The literal Makefile target, not a reimplementation of it (CICD-27).
+        # `make container-verify` = container-build + container-scan +
+        # container-bringup, and `make verify` composes the same target, so this
+        # stage is now reproducible locally instead of being CI-only.
+        run: make container-verify
 
   workflow-sast:
     name: workflow SAST (zizmor)
