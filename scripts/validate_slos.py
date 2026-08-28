@@ -35,9 +35,7 @@ def _field_errors(path: Path, doc: dict[str, object]) -> list[str]:
             continue
         value = doc[field]
         if isinstance(value, bool) or not isinstance(value, expected):
-            errors.append(
-                f"{path}: field '{field}' must be {expected}, got {type(value).__name__}"
-            )
+            errors.append(f"{path}: field '{field}' must be {expected}, got {type(value).__name__}")
     return errors
 
 

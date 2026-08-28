@@ -16,13 +16,21 @@ install: ## Sync the environment (uv, locked lock, dev group — CQ-09/CQ-27)
 	# `--locked` resolves against pyproject.toml and exits 1 when they disagree.
 	uv sync --locked --all-extras --group dev
 
-lint: ## Static analysis (ruff): correctness, security, import hygiene, complexity
-	uv run ruff check src tests
-	uv run ruff format --check src tests
+lint: ## Static analysis (ruff + shellcheck): correctness, security, import hygiene, complexity
+	# `scripts` is in scope deliberately. It holds gate logic — todo-gate,
+	# i18n-check, the SLO validator, the semgrep-test and external-refs gates —
+	# and gate code held to a lower standard than the code it gates is how a
+	# gate quietly stops working. Extending ruff here immediately caught a
+	# complexity violation in one of them.
+	uv run ruff check src tests scripts
+	uv run ruff format --check src tests scripts
+	# Same reasoning for the shell gates: a swallowed exit code or an unquoted
+	# expansion in todo-gate.sh would disarm a merge gate silently.
+	shellcheck scripts/*.sh
 
 format: ## Auto-format
-	uv run ruff format src tests
-	uv run ruff check --fix src tests
+	uv run ruff format src tests scripts
+	uv run ruff check --fix src tests scripts
 
 type: ## Strict type checking (mypy)
 	uv run mypy
