@@ -1075,8 +1075,15 @@ class Storage:
         its owners' layers together — see `_fold_owner_policies` for the
         per-field rules. Tombstoned rows own nothing (they are unwatched);
         owners with no override resolve through the global defaults like
-        anyone else. Unknown MBIDs come back absent from the mapping, which
-        callers treat as "fully default".
+        anyone else.
+
+        An MBID with no live owner — an F8-promoted recommendation, which
+        deliberately has no ``ArtistMatch``/Plex row — resolves to the global
+        defaults rather than being omitted. It used to come back absent, and
+        the one caller that reads a *type* policy treated absence as "no
+        restriction", so the F10 albums-only default was silently skipped for
+        exactly the artists a user discovered rather than owned (issue #33).
+        The mapping is therefore total over ``artist_mbids``.
         """
         today = utcnow().date()
         unique_ids = list(dict.fromkeys(artist_mbids))
@@ -1110,6 +1117,13 @@ class Storage:
         for mbid in unique_ids:
             owner_keys = [key for key in keys_by_mbid.get(mbid, []) if key in live_rows]
             if not owner_keys:
+                # No live Plex owner: a promoted candidate, or an identity whose
+                # owners are all tombstoned. Either way the answer is the global
+                # policy, not "unrestricted" (issue #33). Muting and priority are
+                # per-artist only, so an unowned identity is unmuted and normal —
+                # identical to what the other two callers already did with an
+                # absent entry.
+                resolved[mbid] = resolve_effective(defaults, None)
                 continue
             candidates: list[ArtistWatchSettings] = []
             for key in owner_keys:
@@ -1121,9 +1135,13 @@ class Storage:
             resolved[mbid] = self._fold_owner_policies(candidates, today)
         return resolved
 
-    def effective_watch_settings(self, artist_mbid: str) -> ArtistWatchSettings | None:
-        """Single-MBID convenience over `effective_watch_settings_for_mbids`."""
-        return self.effective_watch_settings_for_mbids([artist_mbid]).get(artist_mbid)
+    def effective_watch_settings(self, artist_mbid: str) -> ArtistWatchSettings:
+        """Single-MBID convenience over `effective_watch_settings_for_mbids`.
+
+        Always a concrete policy: an unowned or unknown MBID resolves to the
+        global defaults. Callers must not read "no owner" as "no filter".
+        """
+        return self.effective_watch_settings_for_mbids([artist_mbid])[artist_mbid]
 
     def list_artist_directory(self) -> list[tuple[Artist, str | None]]:
         """Every artist row (tombstones included) with its match status, if any.

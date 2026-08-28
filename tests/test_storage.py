@@ -383,6 +383,90 @@ def test_a_promoted_candidate_joins_the_watch_pool_and_renders(tmp_path: Path) -
     storage.close()
 
 
+class _SingleOnlyBrowseClient:
+    """Browse client whose every artist has one future-dated Single."""
+
+    def close(self) -> None:
+        pass
+
+    def browse_release_groups(self, artist_mbid: str) -> list[ReleaseGroupInfo]:
+        return [
+            ReleaseGroupInfo(
+                mbid=f"g-single-{artist_mbid}",
+                title="B-side",
+                primary_type="Single",
+                secondary_types=(),
+                first_release_date="2030-01-01",
+            )
+        ]
+
+
+def test_a_promoted_candidate_obeys_the_default_release_type_filter(tmp_path: Path) -> None:
+    from encore.models import Recommendation
+    from encore.watch import watch_all_artists
+
+    # Regression, issue #33. F8-promoted candidates have no Artist/ArtistMatch
+    # row, so `effective_watch_settings_for_mbids` skipped them and returned no
+    # policy at all. `watch_artist`'s `settings is None or ...` then
+    # short-circuited to True, and the F10 albums-only default — the README's
+    # "stays quiet by default" promise — was never applied to a promoted
+    # artist. Every EP, single, live album and compilation fired a real
+    # notification. The pre-existing promoted-candidate test could not catch
+    # this: it used primary_type="Album", which passes the filter either way.
+    storage = Storage(tmp_path)
+    with storage.session() as session:
+        session.add(
+            Recommendation(
+                mbid="mbid-promoted", name="Promoted Candidate", score=0.9, status="promoted"
+            )
+        )
+        session.commit()
+
+    report = watch_all_artists(storage, _SingleOnlyBrowseClient())  # type: ignore[arg-type]
+    assert report.events_filtered == 1
+    assert report.events_upcoming == 0 and report.events_new == 0
+    assert storage.list_event_views() == []
+    storage.close()
+
+
+def test_owned_and_promoted_artists_get_the_same_type_policy(tmp_path: Path) -> None:
+    from encore.models import Recommendation
+    from encore.watch import watch_all_artists
+
+    # The two identity kinds must not diverge: the same Single is filtered for
+    # an owned (Plex-synced) artist and for a promoted one.
+    storage = Storage(tmp_path)
+    _seed_owned_artist(storage, "key-1", "Owned", "mbid-owned")
+    with storage.session() as session:
+        session.add(Recommendation(mbid="mbid-promoted", name="Promoted", status="promoted"))
+        session.commit()
+
+    report = watch_all_artists(storage, _SingleOnlyBrowseClient())  # type: ignore[arg-type]
+    assert report.events_filtered == 2  # one per artist, owned and promoted alike
+    assert storage.list_event_views() == []
+    storage.close()
+
+
+def test_opting_a_promoted_artist_in_lets_the_single_through(tmp_path: Path) -> None:
+    from encore.models import Recommendation
+    from encore.watch import watch_all_artists
+
+    # The other direction: the filter must be a real policy, not a blanket
+    # block. Opting singles in globally lets the promoted artist's single
+    # through, proving the gate above is the default speaking, not a hard-coded
+    # rejection of promoted identities.
+    storage = Storage(tmp_path)
+    storage.set_watch_default_types(allow_primary=("album", "single"))
+    with storage.session() as session:
+        session.add(Recommendation(mbid="mbid-promoted", name="Promoted", status="promoted"))
+        session.commit()
+
+    report = watch_all_artists(storage, _SingleOnlyBrowseClient())  # type: ignore[arg-type]
+    assert report.events_filtered == 0
+    assert report.events_upcoming == 1
+    storage.close()
+
+
 def test_dismissed_candidates_never_join_the_watch_pool(tmp_path: Path) -> None:
     from encore.models import Recommendation
 
