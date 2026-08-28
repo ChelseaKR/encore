@@ -3,14 +3,19 @@
 > Generic enforcement lives in the portfolio's private `STANDARDS/` (fetched at CI
 > time, never committed here). This document carries the decisions and
 > project-specific values.
-> **Last verified: 2026-07-12 · Recheck cadence: at each milestone exit.**
+> **Last verified: 2026-08-28 · Recheck cadence: at each milestone exit.**
 
 ## 1. Snapshot
 
-Repo status: **Pre-alpha, M2 in progress.** M1 is complete (F0 SQLite WAL
-storage with forward migrations and encrypted-at-rest settings, F1 read-only
-Plex sync, F2 MusicBrainz matching) and M2 is most of the way there: F3 release
-watching, F4 notifications, and F5 standing feeds have landed. **F6, the
+Repo status: **Pre-alpha, M2 in progress.** M1 is *feature*-complete (F0
+SQLite WAL storage with forward migrations and encrypted-at-rest settings, F1
+read-only Plex sync, F2 MusicBrainz matching), with one exit criterion
+deliberately outstanding: the U8 validation spike has not run, so the ≥90%
+auto-match rate on a real library is unmeasured and the auto-match thresholds
+in `src/encore/matching/scoring.py` remain provisional (§7, §8 — issue #21).
+M1 is therefore not *closed*; its remaining criterion is carried into the M2
+soak. M2 is most of the way there: F3 release watching, F4 notifications, and
+F5 standing feeds have landed. **F6, the
 onboarding wizard, is the remaining MVP feature** — and with it the admin
 password and the first rendered UI. Nothing has run against a live install for
 24 hours yet; the soak is the M2 exit gate. See `CHANGELOG.md` `[Unreleased]`
@@ -81,7 +86,7 @@ via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
 | Full-history secret scan (TruffleHog, verified) | AUTO (SEC-19) | 0 verified | 5 | Met — weekly, `.github/workflows/trufflehog.yml` (wired 2026-07-05) |
 | CI egress policy (Harden-Runner) | AUTO (SEC-04) | audit today | 1–9 | Met at `audit` — every workflow; flips to `block` once the steady-state endpoint allowlist is known from a few runs' telemetry |
 | MB rate-limit violations (soak counter) | AUTO (project) | 0 | 4 | Polling code exists (F3, 2026-07-31): all MB traffic — search and browse — shares one process-global 1 req/s limiter, tested at the unit level; the soak *counter* itself needs a real 24h deployment and lands with the M2 exit soak |
-| Auto-match precision (fixture library) | AUTO (project) | ≥95% fixtures; ≥90% field | 4 | **Fixture half met (F2, 2026-07-17)** — the 22-case known-nasty battery in `tests/test_matching_engine.py` gates ≥95% correct decisions and zero wrong auto-matches on every run; the ≥90% field half needs the U8 validation spike on a real library, which also freezes the provisional thresholds |
+| Auto-match precision (fixture library) | AUTO (project) | ≥95% fixtures; ≥90% field | 4 | **Fixture half met (F2, 2026-07-17)** — the 23-case known-nasty battery in `tests/test_matching_engine.py` gates ≥95% correct decisions and zero wrong auto-matches on every run; the ≥90% field half needs the U8 validation spike on a real library, which also freezes the provisional thresholds |
 
 No row is a bare `N/A` — every one carries its reason and the milestone it activates
 at (DOC-12/13).
@@ -95,11 +100,15 @@ Milestones M0–M4 with exit criteria are specified in full in
   plans-folder content graduated into repo docs in repo voice (done — this file,
   `README.md`, `docs/RESPONSIBLE-TECH-AUDITS.md`, `docs/I18N.md`, and `docs/adr/`
   are that graduation).
-- **M1 — Sync & match** (in progress; F0 storage complete, F1 Plex sync complete
-  2026-07-17, F2 matching engine + review queue complete 2026-07-17). *Exit:*
-  validation spike committed; ≥90% auto-match on the reference library; the
-  read-only-Plex and no-outing guards land as tests and go merge-blocking (done
-  with F1/F2 — `make responsible`, CI stage 8).
+- **M1 — Sync & match** (feature-complete, exit criterion outstanding; F0
+  storage complete, F1 Plex sync complete 2026-07-17, F2 matching engine +
+  review queue complete 2026-07-17). *Exit:* validation spike committed —
+  **not done**; ≥90% auto-match on the reference library — **not measured**
+  (U8 needs a real Plex library, a human-input task, and freezing the
+  provisional thresholds depends on it); the read-only-Plex and no-outing
+  guards land as tests and go merge-blocking — done with F1/F2
+  (`make responsible`, CI stage 8). §1 states the same status: two of three
+  met, M1 open until U8 runs.
 - **M2 — Watch & alert** (F3–F6, the MVP line; F3 release watching complete
   2026-07-31 — poller, diff engine, baseline seeding per `docs/adr/0011`,
   events table, second scheduler, `encore watch`. F4 notifications complete
