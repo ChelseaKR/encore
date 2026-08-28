@@ -9,8 +9,12 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-install: ## Sync the environment (uv, frozen lock, dev group — CQ-09/CQ-27)
-	uv sync --frozen --all-extras --group dev
+install: ## Sync the environment (uv, locked lock, dev group — CQ-09/CQ-27)
+	# `--locked`, not `--frozen`. `--frozen` installs straight from uv.lock without
+	# reading pyproject.toml, so it cannot compare the two and exits 0 on a lock that
+	# no longer satisfies the manifest — the CQ-09 lockfile control could not fail.
+	# `--locked` resolves against pyproject.toml and exits 1 when they disagree.
+	uv sync --locked --all-extras --group dev
 
 lint: ## Static analysis (ruff): correctness, security, import hygiene, complexity
 	uv run ruff check src tests
