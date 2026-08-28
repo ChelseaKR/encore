@@ -8,6 +8,91 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The merge gate now contains the stage that has actually been failing.**
+  `ci.yml`'s Stage 9 (docker build, Trivy CVE scan, `/livez` bring-up) existed
+  only in the workflow: no Makefile target built or scanned a container, and
+  Trivy's severity/exit-code/ignore-unfixed lived as `trivy-action` inputs.
+  Five documents nonetheless stated that `make verify` is the CI gate with no
+  drifted second implementation. It was not, and the gap was the expensive one:
+  Trivy accounts for eight of the last twenty CI failures, so the single stage
+  with a real failure history was the one a contributor could not run —
+  `make verify` reported "all gates green" on trees CI then rejected on a real
+  HIGH CVE. Stage 9 is now `make container-build`/`container-scan`/
+  `container-bringup`, composed as `make container-verify`, called by both
+  `ci.yml` and `release.yml`, and included in `make verify`. It fails closed
+  when `docker` or `trivy` is missing rather than skipping.
+
+- **The lockfile control could not fail (CQ-09).** `make install` ran
+  `uv sync --frozen`, which installs straight from `uv.lock` without reading
+  `pyproject.toml` and therefore exits 0 on a lock that no longer satisfies the
+  manifest; no `uv lock --check` existed anywhere. Measured: a dependency added
+  to `pyproject.toml` and absent from `uv.lock` gives `--frozen` exit 0 and
+  `--locked` exit 1. Now `--locked`.
+
+- **The custom Semgrep rule's self-test passed with no tests.**
+  `semgrep test .semgrep-rules` prints `No unit tests found` as a warning and
+  **exits 0**, so deleting the rule's test file — or adding a second rule and
+  forgetting one — left `make security` green while proving nothing about the
+  repo's only bespoke SAST rule, the one backing the no-secrets-in-logs promise.
+  `scripts/semgrep-test-gate.sh` now requires every rule file to have a sibling
+  test file and refuses a run that reports no tests.
+
+- **The secret scan could not see an uncommitted secret.** `make security` ran
+  `gitleaks detect --source .`, which scans git *history*; a live-shaped AWS key
+  sitting in the working tree gave exit 0. CI was covered (it scans a committed
+  tree at `fetch-depth: 0`), but the local gate a contributor runs *before*
+  committing — the last moment the secret can be stopped — was not, and the
+  pre-commit hook only helps if it was installed. A `--no-git` working-tree scan
+  now runs alongside the history scan.
+
+- **Gate code is now gated.** `scripts/`, which holds the todo-gate, i18n-check,
+  SLO-validator, and the two new gates, was neither linted nor type-checked, and
+  no shell script was shellchecked. `make lint` now covers `scripts` with ruff
+  and `shellcheck scripts/*.sh`; mypy's scope includes it.
+
+- **A Plex GUID could rescue a near-miss name mismatch past the auto-match
+  threshold (#32).** `scoring.py` documented that the +0.15 GUID boost "cannot
+  rescue a name mismatch", but the boost was added *after* the fuzzy ceiling,
+  so any fuzzy ratio above ~0.882 auto-matched on the GUID alone — a
+  one-character difference, a tribute band, or any close-but-wrong entry a
+  mis-tagged Plex GUID points at. The existing test paired Radiohead with
+  *Coldplay*, so unrelated that it passed either way. The boost now applies only
+  where the name component already reached exact or exact-alias, and the fixture
+  battery carries the near-miss case.
+
+- **The release-type filter was silently bypassed for promoted artists (#33).**
+  `effective_watch_settings_for_mbids` omitted any MBID with no live Plex owner,
+  which is precisely what an F8-promoted recommendation is, and `watch_artist`
+  read that absence as "no restriction". Every EP, single, live album and
+  compilation from a promoted artist fired a real notification while the same
+  release from an owned artist was correctly filtered. Unowned identities now
+  resolve to the global defaults, so "quiet by default" means the same thing for
+  discovered and owned music.
+
+- **The iCal feed showed releases RSS and notifications suppressed (#34).** The
+  type filter is enforced at event-creation time, which RSS inherits for free;
+  the calendar reads `release_groups` directly — deliberately, so a date change
+  moves an entry instead of duplicating it — and so bypassed the filter. A user
+  who kept the albums-only default still got singles and EPs on their calendar.
+  `list_upcoming_releases` now applies the same policy. Muting is deliberately
+  still not applied there: muting suppresses deliveries only.
+
+- **The roadmap said two different things about M1 (#21).** §1 called M1
+  complete while §7 and §8 recorded its ≥90% field auto-match criterion as
+  unmet. All three now say the same thing: M1 is feature-complete with the U8
+  validation spike outstanding, so the auto-match thresholds remain provisional.
+
+### Added
+
+- **A ratchet on references to paths outside the repository (#22).** 39
+  committed references point at a sibling planning directory that is not a git
+  repository and never has been (issue #22 names it); they resolve to nothing
+  for anyone who clones encore, and the two most load-bearing — the M0–M4 exit
+  criteria and the F1–F14 feature plan — would go public with the repo at M4. Retiring them is a
+  per-document decision for the maintainer; `make external-refs` meanwhile makes
+  `.external-refs.yml` a ceiling, so the count can fall freely but cannot grow
+  without a deliberate, reviewable edit.
+
 - **`encore match` and `encore matches` close the F2 CLI gap.** The matching
   engine (`MatchEngine`) and the review-queue storage methods have existed
   since F2 landed, but nothing in the shipped CLI or scheduler ever called
