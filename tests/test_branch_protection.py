@@ -79,6 +79,10 @@ def required_contexts() -> list[str]:
             f"{SCRIPT} no longer assigns CHECKS as a single-quoted JSON array, so this "
             "module cannot tell what it would require. Do not delete this check; update it."
         )
+    # Bound before the try so a parse failure cannot leave the name unset; `pytest.fail`
+    # raises, and "unreachable in practice" is the reasoning this module exists to
+    # distrust. `None` is not a non-empty list either, so the next check still refuses.
+    checks: Any = None
     try:
         checks = json.loads(found.group(1))
     except json.JSONDecodeError as exc:
@@ -104,12 +108,14 @@ def protection_settings() -> dict[str, Any]:
     checks = CHECKS_ASSIGNMENT.search(text)
     if checks is None:
         pytest.fail(f"{SCRIPT} no longer assigns CHECKS")
+    # Same binding-before-the-try as above, for the same reason.
+    loaded: Any = None
     try:
         loaded = json.loads(body.group(1).replace("${CHECKS}", checks.group(1)))
     except json.JSONDecodeError as exc:
         pytest.fail(f"the settings body in {SCRIPT} is not parseable JSON: {exc}")
     if not isinstance(loaded, dict):
-        pytest.fail(f"the settings body in {SCRIPT} is not a JSON object")
+        pytest.fail(f"the settings body in {SCRIPT} is not a JSON object: {loaded!r}")
     return loaded
 
 
