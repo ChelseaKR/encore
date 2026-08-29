@@ -3,7 +3,7 @@
 > Generic enforcement lives in the portfolio's private `STANDARDS/` (fetched at CI
 > time, never committed here). This document carries the decisions and
 > project-specific values.
-> **Last verified: 2026-08-28 · Recheck cadence: at each milestone exit.**
+> **Last verified: 2026-08-29 · Recheck cadence: at each milestone exit.**
 
 ## 1. Snapshot
 
@@ -18,8 +18,19 @@ soak. M2 is most of the way there: F3 release watching, F4 notifications, and
 F5 standing feeds have landed. **F6, the
 onboarding wizard, is the remaining MVP feature** — and with it the admin
 password and the first rendered UI. Nothing has run against a live install for
-24 hours yet; the soak is the M2 exit gate. See `CHANGELOG.md` `[Unreleased]`
-and `encore-plans/CONTEXT.md` for the planning history that preceded this repo.
+24 hours yet; the soak is the M2 exit gate.
+
+M3's four features landed ahead of F6, all on 2026-08-22 (#27–#30): F10 watch
+settings, F9 listening-history weighting, F7 similar-artist recommendations, F8
+promoted-recommendation watching. That does **not** close M3 — two of its three
+exit criteria are measured on a recommendation *page*, which does not exist until
+F6 brings the first rendered UI. So M1, M2 and M3 are all open at once, each on an
+exit criterion rather than on a missing feature; the sequence F1–F14 is a priority
+order, not a promise that milestones close in it. §8 carries the per-milestone
+detail.
+
+See `CHANGELOG.md` `[Unreleased]` and `encore-plans/CONTEXT.md` for the planning
+history that preceded this repo.
 
 ## 2. Problem & users
 
@@ -122,8 +133,16 @@ Milestones M0–M4 with exit criteria are specified in full in
   install → test notification in <10 min; 24h soak with zero duplicate alerts
   and zero rate-limit violations; a11y gates go merge-blocking with the first
   real UI.
-- **M3 — Discover** (F7–F10). *Exit:* rec page <2s from cache; noise budget honored;
-  dismissals persist.
+- **M3 — Discover** (F7–F10, all four features complete 2026-08-22, ahead of F6 —
+  #27 per-artist and global watch settings, #28 listening-history weighting from
+  Plex play counts, #29 similar-artist recommendations with provenance from the
+  ListenBrainz labs dataset, #30 promotion into the release-watch pool. CLI only:
+  `encore recommend`, `encore recommendations list|dismiss|promote`, `encore
+  settings`). *Exit:* rec page <2s from cache — **not measurable yet**, there is no
+  rec page until F6's UI; noise budget honored — **not measured**, same reason it
+  needs a live install as M2's soak does; dismissals persist — met in storage and
+  regression-tested (a dismissed candidate does not resurrect on the next refresh).
+  M3 is therefore feature-complete and open, blocked behind F6 like M2's soak.
 - **M4 — Consumer polish & first release** (repo status → `Beta`). *Exit:*
   v0.1.0 published to GHCR; a second human installs it from docs alone; public/private
   flip decision put to Chelsea with the trademark-sweep result — see
