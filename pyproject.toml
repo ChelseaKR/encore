@@ -111,7 +111,10 @@ strict = true
 warn_unreachable = true
 warn_redundant_casts = true
 mypy_path = "src"
-files = ["src/encore", "tests"]
+# `scripts` carries gate logic (todo-gate, i18n-check, the SLO validator, the
+# semgrep-test and external-refs gates); it is type-checked to the same
+# standard as the code it gates.
+files = ["src/encore", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 # plexapi and apscheduler ship no type information (no stubs, no py.typed).

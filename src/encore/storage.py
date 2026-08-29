@@ -1075,8 +1075,15 @@ class Storage:
         its owners' layers together — see `_fold_owner_policies` for the
         per-field rules. Tombstoned rows own nothing (they are unwatched);
         owners with no override resolve through the global defaults like
-        anyone else. Unknown MBIDs come back absent from the mapping, which
-        callers treat as "fully default".
+        anyone else.
+
+        An MBID with no live owner — an F8-promoted recommendation, which
+        deliberately has no ``ArtistMatch``/Plex row — resolves to the global
+        defaults rather than being omitted. It used to come back absent, and
+        the one caller that reads a *type* policy treated absence as "no
+        restriction", so the F10 albums-only default was silently skipped for
+        exactly the artists a user discovered rather than owned (issue #33).
+        The mapping is therefore total over ``artist_mbids``.
         """
         today = utcnow().date()
         unique_ids = list(dict.fromkeys(artist_mbids))
@@ -1110,6 +1117,13 @@ class Storage:
         for mbid in unique_ids:
             owner_keys = [key for key in keys_by_mbid.get(mbid, []) if key in live_rows]
             if not owner_keys:
+                # No live Plex owner: a promoted candidate, or an identity whose
+                # owners are all tombstoned. Either way the answer is the global
+                # policy, not "unrestricted" (issue #33). Muting and priority are
+                # per-artist only, so an unowned identity is unmuted and normal —
+                # identical to what the other two callers already did with an
+                # absent entry.
+                resolved[mbid] = resolve_effective(defaults, None)
                 continue
             candidates: list[ArtistWatchSettings] = []
             for key in owner_keys:
@@ -1121,9 +1135,13 @@ class Storage:
             resolved[mbid] = self._fold_owner_policies(candidates, today)
         return resolved
 
-    def effective_watch_settings(self, artist_mbid: str) -> ArtistWatchSettings | None:
-        """Single-MBID convenience over `effective_watch_settings_for_mbids`."""
-        return self.effective_watch_settings_for_mbids([artist_mbid]).get(artist_mbid)
+    def effective_watch_settings(self, artist_mbid: str) -> ArtistWatchSettings:
+        """Single-MBID convenience over `effective_watch_settings_for_mbids`.
+
+        Always a concrete policy: an unowned or unknown MBID resolves to the
+        global defaults. Callers must not read "no owner" as "no filter".
+        """
+        return self.effective_watch_settings_for_mbids([artist_mbid])[artist_mbid]
 
     def list_artist_directory(self) -> list[tuple[Artist, str | None]]:
         """Every artist row (tombstones included) with its match status, if any.
@@ -1378,6 +1396,15 @@ class Storage:
         stored announcements drop off the calendar.
         Full ISO dates compare correctly as text, so the cut-off is SQL;
         rows are ordered by date then title.
+
+        The F10 release-type policy applies here too. It is enforced at
+        event-creation time, which RSS and notifications inherit for free (a
+        filtered group never gets a ``ReleaseEvent`` row), but this read model
+        goes to ``release_groups`` directly — deliberately, so a ``date_changed``
+        moves the calendar entry instead of duplicating it — and so bypassed the
+        filter entirely (issue #34). Muting is *not* applied: muting suppresses
+        deliveries only and feeds stay truthful (`artistsettings`), whereas the
+        type filter is supposed to suppress the release everywhere.
         """
         if today is None:
             today = utcnow().date()
@@ -1385,6 +1412,9 @@ class Storage:
             rows = self._upcoming_owned_rows(session, today) + self._upcoming_promoted_rows(
                 session, today
             )
+        # One batched resolve for every identity on the calendar, rather than a
+        # per-row lookup (issue #34).
+        policies = self.effective_watch_settings_for_mbids([group.artist_mbid for group, _ in rows])
         views_by_group_mbid: dict[str, UpcomingReleaseView] = {}
         for group, artist_name in rows:
             if group.mbid in views_by_group_mbid:
@@ -1398,6 +1428,11 @@ class Storage:
             secondary = (
                 tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
             )
+            if not policies[group.artist_mbid].passes(group.primary_type, secondary):
+                # The same predicate `watch_artist` applies to events — one
+                # policy, applied consistently across notifications, RSS and
+                # iCal, instead of two read paths disagreeing.
+                continue
             views_by_group_mbid[group.mbid] = UpcomingReleaseView(
                 release_group_mbid=group.mbid,
                 title=group.title,

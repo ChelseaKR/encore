@@ -10,6 +10,10 @@ The score composes, per the roadmap's F2 specification:
   contradiction — a hint can disambiguate homonyms, not overrule the name.
 - **A Plex-GUID MBID is a score boost only, never a review skip** (+0.15):
   it strengthens a plausible candidate but cannot rescue a name mismatch.
+  Enforced, not merely asserted: the boost is applied only to a candidate
+  whose name component already reached exact (1.0) or exact-alias (0.95).
+  A mis-tagged Plex GUID pointing at a close-but-wrong MusicBrainz entry
+  therefore lands in the review queue instead of auto-matching (issue #32).
 
 Two candidates within `AMBIGUITY_MARGIN` of each other (homonyms) always go
 to review — a wrong auto-match is strictly worse than a queued one.
@@ -47,6 +51,9 @@ _FUZZY_CEILING = 0.85
 _MB_PRIOR_WEIGHT = 0.05
 _HINT_BONUS = 0.03
 _HINT_PENALTY = 0.10
+# Applied only when the name component is exact or an exact alias — see
+# `score_candidate`. A boost that could cross the threshold on its own would be
+# a review skip, which is what the module docstring promises it is not.
 _GUID_BOOST = 0.15
 
 
@@ -123,11 +130,19 @@ def score_candidate(hints: ArtistHints, candidate: ArtistCandidate) -> float:
     Raw scores are used for ranking and the ambiguity margin so a boost is
     never erased by clamping; persist ``min(score, 1.0)`` as the confidence.
     """
-    score = _name_component(hints.name, candidate)
+    name = _name_component(hints.name, candidate)
+    score = name
     score += (candidate.mb_score / 100) * _MB_PRIOR_WEIGHT
     score += _hint_component(hints.type_hint, candidate.artist_type)
     score += _hint_component(hints.country_hint, candidate.country)
-    if hints.guid_mbid is not None and hints.guid_mbid == candidate.mbid:
+    # The GUID boost applies only where the name already matches exactly or via
+    # an exact alias. `_FUZZY_CEILING` bounds the *name component*; it never
+    # bounded the composite, so adding +0.15 on top of a merely-fuzzy name let
+    # any fuzzy ratio >= ~0.882 cross `AUTO_MATCH_THRESHOLD` on the GUID alone —
+    # a one-character difference auto-matched (issue #32). Gating on the name
+    # component is what makes the module's stated invariant true: a GUID
+    # strengthens a plausible candidate, it does not rescue a name mismatch.
+    if hints.guid_mbid is not None and hints.guid_mbid == candidate.mbid and name >= _ALIAS_SCORE:
         score += _GUID_BOOST
     return score
 

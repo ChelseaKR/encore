@@ -1,0 +1,46 @@
+# External-reference ledger (issue #22).
+#
+# `../encore-plans/` is a plain local directory: not a git repository, not a
+# submodule, never in this repository's history. Every reference below resolves
+# to nothing for anyone who clones encore, and would go public with the repo at
+# the M4 public/private flip (ROADMAP section 8).
+#
+# Resolving each one is a per-document decision (graduate into docs/, publish
+# separately and link by URL, or cut the reference and say what to read
+# instead) and belongs to the maintainer, not to a gate. So this file is a
+# CEILING, not an allowlist of things that are fine: `make external-refs`
+# fails when any file exceeds its number here. Counts may fall freely; raising
+# one takes a deliberate, reviewable edit. Target before M4: every entry gone.
+#
+# The two load-bearing references are the M0-M4 exit criteria
+# (docs/ROADMAP.md section 8) and the F1-F14 feature plan: the criteria that
+# decide whether a milestone is done are not reviewable in the repository that
+# claims to have met them.
+schema_version: 1
+external_roots:
+  - encore-plans
+allowed:
+  ".dockerignore": 1
+  "CHANGELOG.md": 1
+  "DEFINITION_OF_DONE.md": 2
+  "docs/I18N.md": 1
+  "docs/RESPONSIBLE-TECH-AUDITS.md": 3
+  "docs/ROADMAP.md": 7
+  "docs/adr/0000-record-architecture-decisions.md": 2
+  "docs/adr/0001-release-group-level-watching.md": 1
+  "docs/adr/0002-poll-dont-webhook.md": 2
+  "docs/adr/0003-metabrainz-sole-metadata-supplier.md": 3
+  "docs/adr/0005-sqlite-single-container.md": 1
+  "docs/adr/0006-mbid-matching-with-review-queue.md": 3
+  "docs/adr/0008-secrets-at-rest-scheme.md": 1
+  "docs/adr/0010-branch-protection-deferred-private-repo.md": 1
+  "docs/adr/0012-notification-delivery-and-egress-boundaries.md": 2
+  "docs/adr/0013-standing-feeds-capability-urls.md": 1
+  "docs/plans/improvement-plan.md": 1
+  "src/encore/artistsettings.py": 1
+  "src/encore/matching/mb.py": 1
+  "src/encore/models.py": 1
+  "src/encore/scheduler.py": 1
+  "src/encore/sync.py": 1
+  "src/encore/watch/engine.py": 1
+  "tests/test_mb_browse.py": 1

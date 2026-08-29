@@ -48,6 +48,44 @@ def test_guid_boost_is_bounded_not_a_review_skip() -> None:
     assert decision.status == "pending"
 
 
+def test_guid_boost_cannot_rescue_a_near_miss_name() -> None:
+    # Regression, issue #32. The pre-existing bounds test above pairs Radiohead
+    # with *Coldplay* — so unrelated that the fuzzy component alone is nowhere
+    # near the threshold, and the test passed whether or not the boost was
+    # bounded. The break is a NEAR miss: one added character. `_FUZZY_CEILING`
+    # bounds only the name component, so before the fix +0.15 stacked on top of
+    # it and any fuzzy ratio >= ~0.882 auto-matched on the GUID alone.
+    hints = ArtistHints(name="Radiohead", guid_mbid="mb-radioheads")
+    near_miss = ArtistCandidate(mbid="mb-radioheads", name="Radioheads", mb_score=100)
+    assert score_candidate(hints, near_miss) < AUTO_MATCH_THRESHOLD
+    assert decide(hints, [near_miss]).status == "pending"
+
+
+def test_guid_boost_still_disambiguates_two_exact_name_homonyms() -> None:
+    # The other direction: gating the boost on name quality must not disarm it
+    # where it is supposed to work. Both candidates match the name exactly, so
+    # the GUID is the only signal that separates them.
+    hints = ArtistHints(name="Nirvana", guid_mbid="mb-nirvana-us")
+    us = ArtistCandidate(mbid="mb-nirvana-us", name="Nirvana", mb_score=95)
+    gb = ArtistCandidate(mbid="mb-nirvana-gb", name="Nirvana", mb_score=100)
+    decision = decide(hints, [us, gb])
+    assert decision.status == "auto"
+    assert decision.chosen is not None and decision.chosen.mbid == "mb-nirvana-us"
+
+
+def test_guid_boost_applies_to_an_exact_alias_match() -> None:
+    # An exact alias is a name match, not a mismatch, so the boost applies.
+    hints = ArtistHints(name="Florence + The Machine", guid_mbid="mb-florence")
+    candidate = ArtistCandidate(
+        mbid="mb-florence",
+        name="Florence and the Machine",
+        aliases=("Florence + The Machine",),
+        mb_score=90,
+    )
+    assert score_candidate(hints, candidate) > AUTO_MATCH_THRESHOLD
+    assert decide(hints, [candidate]).status == "auto"
+
+
 def test_contradicting_hints_penalize_matching_hints_reward() -> None:
     hints = ArtistHints(name="Bush", country_hint="GB", type_hint="Group")
     matching = ArtistCandidate(mbid="a", name="Bush", country="GB", artist_type="Group")

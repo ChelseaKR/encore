@@ -145,7 +145,7 @@ def watch_artist(
     known = {row.mbid: row for row in storage.list_release_groups(artist_mbid)}
     for info in fetched:
         seen = known.get(info.mbid)
-        allowed = settings is None or settings.passes(info.primary_type, info.secondary_types)
+        allowed = settings.passes(info.primary_type, info.secondary_types)
         if seen is None:
             row = storage.add_release_group(
                 artist_mbid=artist_mbid,

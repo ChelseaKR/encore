@@ -16,7 +16,7 @@ proprietary or client material.
 ## Quickstart (developing)
 
 ```sh
-make install   # uv sync --frozen --all-extras --group dev
+make install   # uv sync --locked --all-extras --group dev
 make verify    # the full merge gate: format+lint, type, test+coverage, security, todo-gate
 make serve     # run the dev server
 ```

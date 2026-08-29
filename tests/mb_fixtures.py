@@ -124,6 +124,18 @@ MATCH_CASES: tuple[MatchCase, ...] = (
         expected_status="pending",
     ),
     MatchCase(
+        # Issue #32. The case above is a *far* miss (Radiohead/Coldplay) and
+        # went to review on the name component alone, so it never exercised the
+        # boost's bound. This is the near miss that did auto-match: one added
+        # character, a mis-tagged Plex GUID pointing at the wrong entry.
+        case_id="guid-cannot-rescue-near-miss-name",
+        hints=ArtistHints(name="Radiohead", guid_mbid="mb-radioheads"),
+        response=mb_search_response(
+            mb_artist("mb-radioheads", "Radioheads", 100, "Group", "GB", "tribute band")
+        ),
+        expected_status="pending",
+    ),
+    MatchCase(
         case_id="alias-exact",
         hints=ArtistHints(name="Florence + The Machine"),
         response=mb_search_response(
