@@ -18,7 +18,10 @@ and before this file, nothing enforced it.
 ## Checklist
 
 - [ ] `make verify` is green locally (format+lint · type · test/coverage ≥85% ·
-      security · todo-gate) — the same command CI runs.
+      security · todo-gate). `release.yml` runs this literal command at the tag.
+      `ci.yml` splits the same targets across jobs and omits `todo-gate` and
+      `external-refs`, so green here is stricter than green on the pull request,
+      never the reverse. See the CI/CD row in the README.
 - [ ] No real Plex token, Apprise URL, or taste data appears anywhere in the diff
       — only synthetic sentinels (`tests/fixtures/`).
 - [ ] **No-outing / no-secrets-in-logs** and **read-only-Plex** guards still pass,

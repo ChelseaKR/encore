@@ -20,6 +20,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 README = REPO / "README.md"
+PR_TEMPLATE = REPO / ".github" / "PULL_REQUEST_TEMPLATE.md"
 ROADMAP = REPO / "docs" / "ROADMAP.md"
 MAKEFILE = REPO / "Makefile"
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -151,4 +152,50 @@ def test_readme_architecture_tree_lists_every_top_level_module() -> None:
     }
     assert listed == actual, (
         f"README's architecture tree lists {sorted(listed)}; src/encore holds {sorted(actual)}"
+    )
+
+
+def _pull_request_template() -> str:
+    return PR_TEMPLATE.read_text(encoding="utf-8")
+
+
+def test_the_pull_request_template_does_not_claim_ci_runs_the_literal_command() -> None:
+    """The claim #38 corrected in the README was standing in a second place.
+
+    The template is a published surface: every contributor reads it, and it said
+    `make verify` was "the same command CI runs" while `ci.yml` has never run the
+    literal command. Same defect, same repository, one file over.
+
+    Checked as a property rather than a string: the template may not describe
+    `make verify` as what CI, or the pull request, runs. `release.yml` at the tag is
+    the true statement and the template is free to make it.
+    """
+    template = " ".join(_pull_request_template().split())
+    for overclaim in (
+        "the same command CI runs",
+        "the same command the CI runs",
+        "the command CI runs",
+    ):
+        assert overclaim not in template, (
+            f"the pull request template says {overclaim!r}; ci.yml does not run the "
+            "literal `make verify`, only release.yml does"
+        )
+
+
+def test_the_pull_request_template_names_the_targets_ci_omits() -> None:
+    """Whatever it says about the split has to be the real split.
+
+    Derived from the Makefile and the workflow, so adding a target to `ci.yml`
+    fails here rather than leaving the template quietly overstating the gap.
+    """
+    omitted = {
+        target
+        for target in _verify_prerequisites()
+        if target not in _make_targets(WORKFLOWS / "ci.yml")
+    }
+    template = " ".join(_pull_request_template().split())
+    named = set(re.findall(r"`([a-z0-9-]+)`", template.split("omits", 1)[-1]))
+    assert omitted <= named, (
+        f"the pull request template does not name {sorted(omitted - named)}, which "
+        "`make verify` composes and `ci.yml` never runs"
     )
