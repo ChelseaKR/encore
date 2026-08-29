@@ -3,7 +3,7 @@
 # locally means green in CI (CICD-27).
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check i18n-check i18n-extract wheel serve verify clean \
+.PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check i18n-check i18n-extract docs-audit docs-audit-check wheel serve verify clean \
         container-tools container-build container-scan container-bringup container-verify \
         external-refs
 
@@ -73,6 +73,22 @@ citation-check: ## Validate CITATION.cff (DOC-08) — pinned cffconvert via uvx
 
 i18n-check: ## I18N G2-lite (docs/I18N.md): the committed messages.pot is current
 	@./scripts/i18n-check.sh
+
+docs-audit: ## Regenerate the machine-derived block of docs/DOCUMENTATION-AUDIT.md
+	uv run python scripts/doc_audit.py
+
+docs-audit-check: ## Fail if the committed doc-audit block has drifted from the tree
+	# docs/DOCUMENTATION-AUDIT.md was a hand-written table of `pass` verdicts backed by
+	# counted evidence, with no generator and no check. The verdicts stayed; the counts
+	# stopped describing this repository — "3 test files" against 33, "architecture and
+	# interfaces | 12" against 15 ADR files, "safety, privacy … | 3" against 5. A
+	# document whose whole purpose is to show that this project's process claims are
+	# real was itself reporting success about records it no longer inspected.
+	#
+	# `--check` regenerates the block in memory and compares. It writes nothing: a gate
+	# that repairs the artifact it is judging heals drift on the contributor's disk
+	# while the committed bytes stay stale.
+	uv run python scripts/doc_audit.py --check
 
 i18n-extract: ## Regenerate src/encore/locales/encore.pot from the source strings
 	uv run pybabel extract --mapping-file babel.cfg --keyword _ --keyword _n:1,2 \
@@ -145,7 +161,7 @@ serve: ## Run the dev server
 # The full gate. Determinism + reproducibility: same inputs, same result, every run.
 # CI runs this exact target (ci.yml/release.yml) — there is no second, drifted
 # implementation of "the merge gate" anywhere (CICD-27).
-verify: lint type cov security responsible todo-gate slo-check citation-check i18n-check external-refs wheel container-verify ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation/i18n schema checks + wheel build + stage-9 container build/CVE-scan/bring-up)
+verify: lint type cov security responsible todo-gate slo-check citation-check i18n-check docs-audit-check external-refs wheel container-verify ## Run the complete merge gate (format+lint + type + test/cov + security + stage-8 guards + todo-gate + slo/citation/i18n schema checks + wheel build + stage-9 container build/CVE-scan/bring-up)
 	@echo "verify: all gates green"
 
 clean: ## Remove caches and build artifacts
