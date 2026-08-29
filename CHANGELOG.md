@@ -8,6 +8,43 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The pass above fixed five documents that overclaimed `make verify`/CI
+  equivalence. One sentence survived it.** The README's CI/CD row still read
+  "`make verify` is the literal command CI and `release.yml` run, not a parallel
+  reimplementation". `grep -rn "make verify" .github/workflows/*.yml` finds
+  `run: make verify` at exactly one line, `release.yml:121`; `ci.yml` does not
+  run it and says so itself in its own header comment. Nor is the difference
+  only a split for `fetch-depth: 0`: `ci.yml` reaches ten of the twelve targets
+  `verify` composes and never `todo-gate` or `external-refs`, which therefore
+  run in local `make verify` and at the tag but not on a pull request; and it
+  runs one gate with no Makefile target at all, `zizmor` over the workflows. The
+  row now states both asymmetries. `tests/test_published_claims.py` derives them
+  from the workflows and the Makefile rather than trusting the sentence: it
+  fails if a workflow other than the one the README names runs the literal
+  command, if the set of targets `ci.yml` omits stops matching the set the
+  README lists, or if CI ever runs a target `make verify` does not compose.
+  (Whether `todo-gate` and `external-refs` should join `ci.yml` is a separate
+  decision; this change reports the gap rather than closing it.)
+
+- **The README's status line was four features stale, and nothing in the repo
+  could tell it.** It read "F0 … F5 landed; F6 onboarding wizard remains",
+  accurate the day it was written and wrong from #27 onward: `git log` shows F10
+  (#27), F9 (#28), F7 (#29) and F8 (#30) all merged 2026-08-22,
+  `src/encore/recommend/` and `src/encore/artistsettings.py` ship with tests,
+  `encore recommend` and `encore recommendations` are registered CLI commands,
+  and this file documents all four. F6 does genuinely remain — every occurrence
+  of "wizard" under `src/` is a forward reference — so the correction is
+  downward on M3, not upward on M2. The enumeration is gone rather than
+  corrected, because a corrected copy goes stale one merge later: feature status
+  lives in `docs/ROADMAP.md` §1 and §8 and in this file, the README points
+  there, and a test fails if a bare feature id reappears in the status block.
+  The architecture tree, the README's other hand-maintained list, gained the two
+  modules it never grew (`metrics.py`, `artistsettings.py`), lost the `[M3]`
+  marker that made `recommend/` read as future work, and is now derived from
+  `src/encore/`. `docs/ROADMAP.md` §8's M3 row, which still read as untouched,
+  records what landed and which exit criteria stay unmeasurable until F6 brings
+  the first rendered UI.
+
 - **The merge gate now contains the stage that has actually been failing.**
   `ci.yml`'s Stage 9 (docker build, Trivy CVE scan, `/livez` bring-up) existed
   only in the workflow: no Makefile target built or scanned a container, and

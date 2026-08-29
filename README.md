@@ -7,17 +7,21 @@ It reads the artists you already have, matches them to MusicBrainz, alerts you �
 ntfy, email, Discord, RSS, or iCal — when any of them release something new, and
 recommends adjacent artists via ListenBrainz. It never downloads anything.
 
-**Status:** pre-alpha · `M2` in progress (F0 storage, F1 read-only Plex sync,
-F2 MusicBrainz matching, F3 release watching, F4 notifications, and F5 RSS/iCal
-feeds landed; F6 onboarding wizard remains) · independent personal open-source
+**Status:** pre-alpha · `M2` in progress · independent personal open-source
 project · Apache-2.0 · unaffiliated with any employer or client; contains no
 proprietary or client material.
+
+Which features have landed and which have not is tracked in exactly one place —
+[`docs/ROADMAP.md`](docs/ROADMAP.md) §1 (snapshot) and §8 (milestones), with the
+per-feature detail in [`CHANGELOG.md`](CHANGELOG.md). This README deliberately does
+not re-list it: a second copy of that list is a copy that goes stale one merge later,
+which is exactly what happened to the one that used to sit here.
 
 ## Quickstart (developing)
 
 ```sh
 make install   # uv sync --locked --all-extras --group dev
-make verify    # the full merge gate: format+lint, type, test+coverage, security, todo-gate
+make verify    # the whole merge gate; the Makefile's `verify` target lists the stages
 make serve     # run the dev server
 ```
 
@@ -77,6 +81,8 @@ encore/
 ├── src/encore/
 │   ├── app.py                 # FastAPI app factory — health endpoints today,
 │   │                          #   the htmx UI + JSON API as features land
+│   ├── metrics.py             # in-process RED metrics registry + /metrics text
+│   │                          #   exposition; route templates, never raw paths (OBS-11)
 │   ├── cli.py                 # console_scripts entry point: encore = "encore.cli:main"
 │   ├── storage.py             # SQLite (WAL) + migrations + data directory (F0)
 │   ├── models.py              # SQLModel tables — settings, artists, matches, releases,
@@ -95,7 +101,10 @@ encore/
 │   │                          #   retry/backoff, instant + digest cadences
 │   ├── feeds/                 # F5 standing feeds: RSS release feed + iCal of
 │   │                          #   upcoming dates, behind a rotatable token URL
-│   └── recommend/             # ListenBrainz labs similar-artists (F7, F8)           [M3]
+│   ├── artistsettings.py      # F10 watch policy every consumer reads: release
+│   │                          #   types, muting, per-artist and global priority
+│   └── recommend/             # F7/F8 recommendations: ListenBrainz labs
+│                              #   similar-artists with provenance, promote/dismiss
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
 ├── slos/                       # SLO declarations (Tier A — this is a running service)
 ├── tests/
@@ -135,7 +144,7 @@ never committed. Per-repo *values* live in [`docs/ROADMAP.md`](docs/ROADMAP.md) 
 | Standard | Applies | This repo's posture |
 |---|---|---|
 | Code Quality | ✅ | `ruff` (incl. complexity + TODO/suppression gates) + `mypy --strict`; branch coverage ≥85%; src layout; uv + frozen lock |
-| CI/CD | ✅ | Single `ci.yml`, ordered stages; least-privilege tokens; SHA-pinned actions; Harden-Runner (audit mode) on every workflow; `make verify` is the literal command CI and `release.yml` run, not a parallel reimplementation |
+| CI/CD | ✅ | Single `ci.yml`, ordered stages; least-privilege tokens; SHA-pinned actions; Harden-Runner (audit mode) on every workflow; one Makefile is the gate, not a parallel reimplementation — `release.yml`'s `verify-at-tag` runs the literal `make verify` at the tag, and `ci.yml` calls the same targets split across jobs, so gitleaks can take `fetch-depth: 0` without that clone cost on every matrix leg. The split is not free and this row does not pretend it is: `ci.yml` omits `todo-gate` and `external-refs`, which then run only in local `make verify` and at the tag, and it adds `zizmor` over the workflows, which has no Makefile target. Both asymmetries are gated by `tests/test_published_claims.py` |
 | Security & Supply-Chain | ✅ | ASVS **L2** (holds a Plex token + taste data) — pinned Semgrep (`p/default`, `p/python`, custom no-sensitive-log rule; zero waivers), pip-audit + osv-scanner + gitleaks (locked env, pre-commit + CI + weekly full-history TruffleHog sweep), CodeQL (python + actions), zizmor, Trivy on every container build; cosign+SBOM **at first tagged release (M4)** |
 | Release & Versioning | ✅ | SemVer; signed tags (from M4, first release); Keep-a-Changelog; GHCR by digest, never `:latest` |
 | Accessibility | **Applies from M2** | WCAG 2.2 AA — **N/A — no UI surface today**; becomes merge-blocking at M2 with the first real UI |
