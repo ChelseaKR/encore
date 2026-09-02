@@ -56,7 +56,7 @@ Counts, not verdicts. A count cannot pass or fail; it can only be current, which
 | Surface | Count | Evidence |
 | --- | ---: | --- |
 | Hand-authored docs | 35 | Markdown at the repository root and under `.github/` and `docs/`, plus the root legal and template files |
-| Test modules | 30 | `tests/test_*.py` |
+| Test modules | 31 | `tests/test_*.py` |
 | Test support files | 4 | other `tests/*.py` (fixtures, `__init__.py`) |
 | Workflow files | 5 | `.github/workflows/*.yml` |
 | Gate scripts | 8 | `scripts/*` (lint and mypy cover these to the same standard as `src`) |
@@ -102,6 +102,7 @@ Up to 5 representative files per category; the complete list follows below.
 - `tests/test_cli_feeds.py`
 - `tests/test_cli_matches.py`
 - `tests/test_doc_audit.py`
+- `tests/test_external_refs_gate.py`
 - `tests/test_feeds_ical.py`
 - `tests/test_feeds_rss.py`
 - `tests/test_feeds_storage.py`

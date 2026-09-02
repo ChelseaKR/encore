@@ -12,10 +12,21 @@
 # fails when any file exceeds its number here. Counts may fall freely; raising
 # one takes a deliberate, reviewable edit. Target before M4: every entry gone.
 #
-# The two load-bearing references are the M0-M4 exit criteria
-# (docs/ROADMAP.md section 8) and the F1-F14 feature plan: the criteria that
-# decide whether a milestone is done are not reviewable in the repository that
-# claims to have met them.
+# An absent path is a ceiling of zero, so resolving a document's references
+# means DELETING its line, never setting it to 0. The gate prints a note for
+# any entry whose file is down to zero references or is no longer tracked,
+# because a ceiling nobody has earned pre-authorizes a reference nobody has
+# reviewed.
+#
+# The two load-bearing references were the M0-M4 exit criteria (docs/ROADMAP.md
+# section 8) and the F1-F14 feature plan: the criteria that decide whether a
+# milestone is done were not reviewable in the repository that claims to have
+# met them. Both are resolved -- docs/ROADMAP.md and
+# docs/RESPONSIBLE-TECH-AUDITS.md now carry the content or say plainly that it
+# is not published here, and their entries are gone from the ledger below. What
+# remains is the ADR set, the Definition of Done, docs/I18N.md, the CHANGELOG,
+# and six source docstrings: dated records that cite the draft as the source
+# they were reasoned from, which is a different disposition question.
 schema_version: 1
 external_roots:
   - encore-plans
@@ -24,8 +35,6 @@ allowed:
   "CHANGELOG.md": 1
   "DEFINITION_OF_DONE.md": 2
   "docs/I18N.md": 1
-  "docs/RESPONSIBLE-TECH-AUDITS.md": 3
-  "docs/ROADMAP.md": 7
   "docs/adr/0000-record-architecture-decisions.md": 2
   "docs/adr/0001-release-group-level-watching.md": 1
   "docs/adr/0002-poll-dont-webhook.md": 2
@@ -36,7 +45,6 @@ allowed:
   "docs/adr/0010-branch-protection-deferred-private-repo.md": 1
   "docs/adr/0012-notification-delivery-and-egress-boundaries.md": 2
   "docs/adr/0013-standing-feeds-capability-urls.md": 1
-  "docs/plans/improvement-plan.md": 1
   "src/encore/artistsettings.py": 1
   "src/encore/matching/mb.py": 1
   "src/encore/models.py": 1

@@ -3,7 +3,20 @@
 > Generic enforcement lives in the portfolio's private `STANDARDS/` (fetched at CI
 > time, never committed here). This document carries the decisions and
 > project-specific values.
-> **Last verified: 2026-08-29 · Recheck cadence: at each milestone exit.**
+> **Last verified: 2026-09-01 · Recheck cadence: at each milestone exit.**
+
+> **Nothing here delegates to a document a reader cannot open.** Seven pointers
+> in this file used to send the reader elsewhere for the feature plan, the
+> architecture, the market research, and the M0–M4 exit criteria — to an earlier
+> planning corpus that is a plain local directory on one machine: not a git
+> repository, not a submodule, never in this repository's history. For anyone
+> who clones encore they resolved to nothing, and the criteria that decide
+> whether a milestone is done were not reviewable in the repository claiming to
+> have met them (issue #22). Each is now resolved in place: the section carries
+> the content, or it says plainly that the content is not published here and
+> does not pretend to summarize it. Where a claim rested on that corpus alone it
+> is now labelled an unverified premise rather than research (§4).
+> `make external-refs` pins this file at zero such references.
 
 ## 1. Snapshot
 
@@ -29,29 +42,72 @@ exit criterion rather than on a missing feature; the sequence F1–F14 is a prio
 order, not a promise that milestones close in it. §8 carries the per-milestone
 detail.
 
-See `CHANGELOG.md` `[Unreleased]` and `encore-plans/CONTEXT.md` for the planning
-history that preceded this repo.
+`CHANGELOG.md` `[Unreleased]` is the project history a reader can open. The
+drafting notes that preceded this repository are not published here, and nothing
+below depends on them.
 
 ## 2. Problem & users
 
-See `README.md` and the planning corpus at `../encore-plans/` (`01-market-landscape.md`,
-`02-positioning.md`) for the full thesis, audience, and non-goals. One line: a
-self-hosted Plex music user gets release alerts and recommendations without any tool
-in the stack ever touching acquisition.
+`README.md` carries the thesis, audience, and non-goals a reader can open — the
+non-goals verbatim (§10). The longer positioning and market-landscape drafts
+those were distilled from are not published in this repository; §4 marks the one
+claim that rested on them alone. One line: a self-hosted Plex music user gets
+release alerts and recommendations without any tool in the stack ever touching
+acquisition.
 
 ## 3. Product definition
 
-Features F1–F14, ranked and sequenced, live in `../encore-plans/03-feature-plan.md`.
-MVP is F1–F6 (M1–M2); v1 adds F7–F10 (M3); F11–F14 are parked (see that document's
-"Beyond v1" and "Cut list" sections for what was deliberately left out and why).
+MVP is F1–F6 (M1–M2); v1 adds F7–F10 (M3); F11–F14 are parked. The ranked
+feature plan those labels came from is not published in this repository (issue
+#22), so this section reconstructs the list from what the repository can itself
+account for. Every row cites the committed file it was read off, including the
+four parked ones — a numbered feature nobody can look up is the same dead
+pointer the delegation was.
+
+| # | Feature | Where this repository accounts for it |
+|---|---|---|
+| F0 | SQLite (WAL) storage, forward migrations, encrypted-at-rest settings | `src/encore/storage.py`; `docs/adr/0005`, `docs/adr/0008` |
+| F1 | Read-only Plex library sync | `src/encore/plex/`, `src/encore/sync.py`; `docs/adr/0007` |
+| F2 | MusicBrainz matching + review queue | `src/encore/matching/`; `docs/adr/0006` |
+| F3 | Release watching | `src/encore/watch/`; `docs/adr/0001`, `docs/adr/0011` |
+| F4 | Notifications — Apprise fan-out, delivery queue, digest cadences | `src/encore/notify/`; `docs/adr/0012` |
+| F5 | Standing feeds — RSS + iCal behind a rotatable capability URL | `src/encore/feeds/`; `docs/adr/0013` |
+| F6 | Onboarding wizard — the remaining MVP feature | **Not built.** `docs/adr/0004` fixes the server-rendered htmx approach |
+| F7 | Similar-artist recommendations with provenance | `src/encore/recommend/engine.py`, `src/encore/recommend/lb.py` |
+| F8 | Promotion of a recommendation into the release-watch pool | `src/encore/storage.py` (`list_watched_artist_mbids`), `src/encore/cli.py` |
+| F9 | Listening-history weighting from Plex play counts | `src/encore/sync.py`, `src/encore/storage.py` (`listening_weights`) |
+| F10 | Per-artist and global watch settings — types, muting, priority | `src/encore/artistsettings.py` |
+| F11 | Optional ListenBrainz account linking — **parked** | `docs/RESPONSIBLE-TECH-AUDITS.md` §C — the data inventory carries it as "not yet built" and gates it on a DPIA update |
+| F12 | Jellyfin/Navidrome adapter behind the same read-only interface — **parked** | `docs/adr/0007`, `docs/adr/0002`; `DEFINITION_OF_DONE.md` (portability) |
+| F13 | Multi-user households, per-user data isolation — **parked** | `docs/adr/0005` (the single-container relaxation rule), `docs/adr/0008` |
+| F14 | Optional "vibe" recommendations, deliberately last — **parked** | `docs/adr/0009`; `README.md` (the AI-eval N/A row and its flip trigger) |
+
+**What is missing is the ranking, not the list.** The plan's ordering rationale
+and its cut list — what was considered, deliberately left out, and why — are not
+in this repository and are not reconstructible from it. So this section is a
+definition, not a prioritization: it says what F0–F14 are and where each is
+accounted for, and it does not say why they sit in that order or what was cut to
+get there. Writing that down is the remainder of issue #22 for this section, due
+before the M4 public/private flip (§8).
 
 ## 4. Research & evidence
 
-The market-landscape research (`../encore-plans/01-market-landscape.md`) verified
-that no existing free tool combines Plex-native sync, release alerts, and
-recommendations without being built around downloading music. Claims there carry
-per-claim verification status and a `2026-07-05` currency stamp; re-verify at the
-next milestone exit per that document's own recheck note (DOC-15).
+**No published evidence backs this section.** The market-landscape scan behind
+the claim below was written on 2026-07-05 into a draft that is not in this
+repository, so neither its per-claim verification statuses nor its currency
+stamp can be checked from a clone. It is recorded here as a premise, not as
+research:
+
+> No existing free tool combines Plex-native sync, release alerts, and
+> recommendations without being built around downloading music.
+
+That premise is load-bearing — it is the reason this project exists — and it is
+also two months old in a category where a competitor shipping once would falsify
+it. Until the scan is redone in the open, as a document in `docs/` carrying its
+own sources, this section states what was believed and by when, and claims
+nothing about whether it still holds (issue #22, DOC-15). It is due before the
+M4 public/private flip (§8), where it would otherwise ship as a public
+assertion this repository cannot support.
 
 ## 5. Experience & design
 
@@ -63,9 +119,11 @@ reading docs. Server-rendered htmx UI throughout (`docs/adr/0004`); no SPA.
 ## 6. Architecture
 
 Stack, data model, the two pipelines (sync/watch, recommend), and the MusicBrainz
-rate budget are specified in `../encore-plans/04-architecture.md` and instantiated
-as ADRs in `docs/adr/`. Summary: Python 3.12+, FastAPI + htmx + Jinja2, SQLite (WAL)
-via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single OCI image.
+rate budget are recorded as ADRs in `docs/adr/`, which is where they are
+reviewable; the earlier architecture draft they were derived from is not
+published in this repository. Summary: Python 3.12+, FastAPI + htmx + Jinja2,
+SQLite (WAL) via SQLModel, APScheduler, httpx, python-plexapi, Apprise; single
+OCI image.
 
 ## 7. Quality attributes & metrics
 
@@ -104,8 +162,13 @@ at (DOC-12/13).
 
 ## 8. Implementation plan for Claude Code
 
-Milestones M0–M4 with exit criteria are specified in full in
-`../encore-plans/07-metrics-and-sequencing.md`. Summary:
+**The exit criteria below are the ones this repository is held to.** They were
+drafted in a sequencing note that is not published here, and this section used to
+defer to it — which meant the criteria deciding whether a milestone was done were
+not reviewable in the repository claiming to have met them (issue #22). This
+section does not claim to reproduce that draft; it is the standing copy, and
+where a criterion is unmet or not yet measurable it says so in place rather than
+being summarized away.
 
 - **M0 — Spec & scaffold** (complete). *Exit:* CI green on the empty package;
   plans-folder content graduated into repo docs in repo voice (done — this file,
@@ -158,8 +221,8 @@ depends on.
 
 ## 10. Legal & compliance
 
-Apache-2.0. Non-goals published in `README.md` verbatim per the planning corpus's
-graduation instruction. No regulated-data compliance regime applies (no health,
+Apache-2.0. Non-goals are published verbatim in `README.md`, where they are the
+reviewable copy. No regulated-data compliance regime applies (no health,
 financial, or minor's data); the privacy posture is governed by the DPIA in
 `docs/RESPONSIBLE-TECH-AUDITS.md` and `docs/audits/dpia.md`, not by an external
 statute.
@@ -168,8 +231,9 @@ statute.
 
 ### Observability
 
-**Observability tier: A** (this is a running, self-hosted service, not a CLI/library
-— `../encore-plans/04-architecture.md` §deployment & operations). `/livez` and
+**Observability tier: A** — a running, self-hosted service rather than a CLI or
+library, which is the whole of the justification and needs no source outside this
+repository. `/livez` and
 `/readyz` exist today (`src/encore/app.py`); `readyz` performs a real database
 probe since F0 (M1, 2026-07-11) and carries the scheduler-heartbeat check for
 all four schedulers since the F2 match job landed (sync, match, watch,

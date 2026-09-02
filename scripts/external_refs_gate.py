@@ -99,6 +99,7 @@ def _scan(
     violations: list[str] = []
     slack: list[str] = []
     total = 0
+    counted: dict[str, int] = {}
     for rel in _tracked_files():
         if rel in SELF_EXEMPT:
             continue
@@ -107,6 +108,7 @@ def _scan(
         except (OSError, UnicodeDecodeError):
             continue
         count = _count_refs(text, roots, repo_depth=rel.count("/"))
+        counted[rel] = count
         if count == 0:
             continue
         total += count
@@ -115,6 +117,16 @@ def _scan(
             violations.append(f"{rel}: {count} external reference(s), ledger allows {allowed}")
         elif count < allowed:
             slack.append(f"{rel}: {count} now, ledger still allows {allowed} - tighten it")
+    # A ceiling for a file that has *no* references left is the one kind of slack
+    # the loop above cannot see: it `continue`s on count 0 before comparing, and
+    # a ledger entry for a file that is no longer tracked is never visited at
+    # all. Either way the entry silently pre-authorizes a reference nobody has
+    # reviewed, which is the ratchet slipping back. Absence of an entry already
+    # means a ceiling of zero, so the fix is always to delete the line.
+    for rel, allowed in sorted(ceiling.items()):
+        if allowed and not counted.get(rel, 0):
+            state = "0 now" if rel in counted else "no longer tracked"
+            slack.append(f"{rel}: {state}, ledger still allows {allowed} - delete the entry")
     return violations, slack, total
 
 
