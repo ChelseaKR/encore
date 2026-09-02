@@ -126,6 +126,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# The repository root on the import path, so tests can import the merge gates
+# themselves (`from scripts.doc_audit import ...`). A gate nobody tests is a gate
+# that silently stops gating, and `uv run pytest` — unlike `python -m pytest` —
+# does not put the working directory on sys.path.
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config --import-mode=importlib"
 markers = [
     "no_outing: the sentinel-artist tripwire — taste data must never leak to an unauthorized viewer, a log line, or an outbound request (06-privacy-responsible-tech.md)",

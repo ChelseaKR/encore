@@ -85,12 +85,13 @@ jobs:
         run: make cov
       - name: Stage 8 — responsible-tech guards (read-only Plex · no-secrets-in-logs · no-outing)
         run: make responsible
-      - name: SLO schema (OBS-14) + CITATION.cff (DOC-08) + i18n template (I18N G2-lite) checks
+      - name: SLO schema (OBS-14) + CITATION.cff (DOC-08) + i18n template (I18N G2-lite) + doc-audit drift checks
         if: matrix.python == '3.12'
         run: |
           make slo-check
           make citation-check
           make i18n-check
+          make docs-audit-check
       - name: Wheel/sdist build (CQ-10) — the container is not the only artifact
         if: matrix.python == '3.12'
         run: make wheel
