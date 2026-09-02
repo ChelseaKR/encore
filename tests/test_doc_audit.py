@@ -28,6 +28,9 @@ from scripts.doc_audit import (
     splice,
 )
 
+# A name no repository file will ever have, so a leaked temp file is obvious.
+_STRAY = "doc-audit-stray-file-under-test"
+
 
 def test_committed_block_matches_the_tree() -> None:
     """The whole point: the generated block equals what the tree produces today."""
@@ -97,6 +100,28 @@ def test_every_authored_doc_is_tracked_by_git() -> None:
     tracked = set(result.stdout.splitlines())
     untracked = [rel for rel in authored_docs() if rel not in tracked]
     assert not untracked, f"untracked paths reached the doc inventory: {untracked}"
+
+
+def test_a_stray_untracked_markdown_file_cannot_move_the_counts() -> None:
+    """The generated block must describe the commit, not the checkout.
+
+    The test above states the invariant but only exercises whatever happens to
+    be on disk, so it passed for as long as nobody kept a local note. The
+    collectors walked the filesystem, so an untracked `docs/` scratch file
+    joined the inventory and moved the "Hand-authored docs" and "other docs"
+    counts on one machine and not on CI -- `--check` disagreeing with itself
+    across two checkouts of the same commit, which is drift produced by the
+    anti-drift gate. Plant one and prove it changes nothing.
+    """
+    before = render()
+    stray = ROOT / "docs" / f"{_STRAY}.md"
+    assert not stray.exists(), "a previous run leaked its temp file"
+    stray.write_text("# stray\n", encoding="utf-8")
+    try:
+        assert f"docs/{_STRAY}.md" not in authored_docs()
+        assert render() == before
+    finally:
+        stray.unlink()
 
 
 def test_link_check_actually_checks_links() -> None:
