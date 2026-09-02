@@ -49,7 +49,11 @@ Two deliberate choices about honesty, both inherited:
 drift on the contributor's disk while the committed bytes stay stale, which is how this
 class of staleness hides in the first place.
 
-Pure standard library, no network, deterministic: identical tree, identical bytes.
+Pure standard library, no network, deterministic: **identical commit, identical
+bytes.** That is stronger than "identical tree" and is the property that matters,
+because ``--check`` compares a contributor's regeneration against bytes CI produced
+from a clean checkout. Every collector below enumerates *git-tracked* files for that
+reason — see :func:`tracked_files`.
 """
 
 from __future__ import annotations
@@ -57,9 +61,11 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from collections.abc import Iterable
+from functools import cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -156,6 +162,45 @@ def _relative(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
+@cache
+def tracked_files() -> frozenset[str]:
+    """Every path git tracks, as repo-relative POSIX strings.
+
+    The inventory is defined over *committed* content, not over whatever files a
+    contributor happens to have on disk. The collectors used to walk the
+    filesystem, which made the generated block depend on the checkout rather
+    than on the commit: an untracked note under ``docs/`` moved the
+    "Hand-authored docs" and "other docs" counts on one machine and not on CI,
+    so ``--check`` disagreed with itself across two checkouts of the same
+    commit — drift produced by the anti-drift gate.
+
+    ``tests/test_doc_audit.py::test_every_authored_doc_is_tracked_by_git``
+    already asserted this invariant; the tool did not enforce it, so the test
+    only passed while nobody happened to have a stray Markdown file. Enumerating
+    from git makes the invariant structural. ``EXCLUDED_DIR_NAMES`` stays as a
+    second filter, but it is no longer load-bearing: a hand-maintained list of
+    build artifacts can only ever name the ones someone was already bitten by,
+    where ``.gitignore`` covers them by construction.
+
+    Fails closed when git cannot answer. A fallback to a filesystem walk would
+    silently resume answering the different question this docstring exists to
+    rule out.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell, repo-local
+            ["git", "-C", str(ROOT), "ls-files", "-z"],  # noqa: S607
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:  # pragma: no cover - env
+        raise SystemExit(
+            "doc audit FAILED: cannot list git-tracked files, so the inventory would "
+            f"describe this checkout rather than this commit ({exc})."
+        ) from exc
+    return frozenset(p for p in result.stdout.split("\0") if p)
+
+
 def _excluded(rel: str) -> bool:
     """Report whether this root-relative path is outside the authored-doc surface."""
     if rel.startswith(EXCLUDED_PATH_PREFIXES):
@@ -165,15 +210,9 @@ def _excluded(rel: str) -> bool:
 
 def authored_docs() -> list[str]:
     """Every hand-authored Markdown file, plus the non-Markdown root process files."""
-    found: set[str] = set()
-    for path in ROOT.rglob("*.md"):
-        rel = _relative(path)
-        if _excluded(rel):
-            continue
-        found.add(rel)
-    for rel in (*ROOT_LEGAL_DOCS, *ROOT_TEMPLATES):
-        if (ROOT / rel).is_file():
-            found.add(rel)
+    tracked = tracked_files()
+    found = {rel for rel in tracked if rel.endswith(".md") and not _excluded(rel)}
+    found.update(rel for rel in (*ROOT_LEGAL_DOCS, *ROOT_TEMPLATES) if rel in tracked)
     return sorted(found)
 
 
@@ -187,36 +226,36 @@ def _category(rel: str) -> str:
     return OTHER
 
 
+def _children(directory: str) -> list[str]:
+    """Tracked files directly inside ``directory`` (no recursion), sorted."""
+    prefix = f"{directory}/"
+    return sorted(
+        rel for rel in tracked_files() if rel.startswith(prefix) and "/" not in rel[len(prefix) :]
+    )
+
+
 def _test_files() -> list[str]:
     """Every ``tests/test_*.py`` module, the countable unit for the validation surface."""
-    tests = ROOT / "tests"
-    if not tests.is_dir():
-        return []
-    return sorted(_relative(p) for p in tests.glob("test_*.py"))
+    return [rel for rel in _children("tests") if rel.endswith(".py") and "/test_" in rel]
 
 
 def _test_support_files() -> list[str]:
     """Tracked ``tests/`` files that are not ``test_*.py`` (fixtures, ``__init__``)."""
-    tests = ROOT / "tests"
-    if not tests.is_dir():
-        return []
-    return sorted(_relative(p) for p in tests.glob("*.py") if not p.name.startswith("test_"))
+    return [
+        rel
+        for rel in _children("tests")
+        if rel.endswith(".py") and not rel.startswith("tests/test_")
+    ]
 
 
 def _workflows() -> list[str]:
     """Every GitHub Actions workflow file."""
-    workflows = ROOT / ".github" / "workflows"
-    if not workflows.is_dir():
-        return []
-    return sorted(_relative(p) for p in (*workflows.glob("*.yml"), *workflows.glob("*.yaml")))
+    return [rel for rel in _children(".github/workflows") if rel.endswith((".yml", ".yaml"))]
 
 
 def _gate_scripts() -> list[str]:
     """Every file under ``scripts/`` — this repository keeps its gate logic there."""
-    scripts = ROOT / "scripts"
-    if not scripts.is_dir():
-        return []
-    return sorted(_relative(p) for p in scripts.iterdir() if p.is_file())
+    return _children("scripts")
 
 
 def _requires_python() -> str:

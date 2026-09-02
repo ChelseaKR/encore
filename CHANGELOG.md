@@ -8,6 +8,79 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The roadmap sent readers to a directory that is in no repository, and
+  quietly failed to notice when the pointer count went to zero (issue #22).**
+  `docs/ROADMAP.md` made seven references to an earlier planning corpus and
+  `docs/RESPONSIBLE-TECH-AUDITS.md` three more — a plain local directory on one
+  machine, not a git repository, not a submodule, never in this repository's
+  history. Two were load-bearing: §3 delegated the F1–F14 feature plan, and §8
+  said the M0–M4 exit criteria were "specified in full" elsewhere, which meant
+  the criteria deciding whether a milestone is done were not reviewable in the
+  repository claiming to have met them. Both documents are now at zero
+  references and are pinned there, resolved per document rather than in bulk:
+
+  - **§3 reconstructs F0–F14 from the tree.** Every row, including the four
+    parked ones, cites the committed file it was read off — F11 from the
+    responsible-tech data inventory, F12 from ADR-0007 and the Definition of
+    Done, F13 from ADR-0005's relaxation rule, F14 from ADR-0009. The first
+    draft of this section asserted that F11–F13 were "not named anywhere in
+    this repository"; they are, and
+    `tests/test_external_refs_gate.py::test_every_feature_row_is_backed_by_the_file_it_cites`
+    exists because writing down what a document *lacks* is exactly as
+    falsifiable, and exactly as capable of being wrong, as writing down what it
+    has. What genuinely did not survive is the *ranking*: the ordering rationale
+    and the cut list are not reconstructible, and the section says so instead of
+    implying it is a prioritization.
+  - **§4 is relabelled a premise, not research.** Its market claim — no free
+    tool combines Plex-native sync, release alerts and recommendations without
+    being built around downloading — rested entirely on an unpublished scan, so
+    its per-claim verification statuses and its `2026-07-05` currency stamp
+    could not be checked from a clone. A verification status nobody can check is
+    a claim, not a finding. The section now records what was believed and by
+    when, and claims nothing about whether it still holds.
+  - **§8 owns the exit criteria** rather than deferring to a fuller copy
+    elsewhere, and §1, §2, §6, §10, §11 and the audits' threat model either
+    carry their content or say plainly it is not published here. Nothing was
+    invented to fill a gap.
+
+  The ratchet itself had a blind spot in the direction it protects: `_scan`
+  `continue`d the moment a file's count hit zero, so a ledger entry left at its
+  old ceiling was never reported, and an entry for a file git no longer tracks
+  was never visited at all. Either one silently pre-authorizes references nobody
+  reviewed. The gate now reports both, and immediately caught a ceiling for
+  `docs/plans/improvement-plan.md`, a file that has never been committed.
+  Absence of an entry already means zero, so the fix is always to delete the
+  line — asserted, along with "no entry is written as 0".
+
+  Remaining under #22, and left deliberately: 29 references in the ADR set, the
+  Definition of Done, `docs/I18N.md`, this file, and six source docstrings.
+  Those are dated records citing the draft they were reasoned from, which is a
+  different disposition question from a live document telling a reader to go
+  and open it.
+
+- **The anti-drift doc audit was itself a source of drift: it counted untracked
+  files.** Adding the test module above surfaced it. `scripts/doc_audit.py`
+  enumerated with `ROOT.rglob("*.md")` and `Path.glob`, so a contributor's
+  untracked scratch note under `docs/` joined the inventory and moved
+  "Hand-authored docs" and "other docs" — on that machine only. CI regenerates
+  from a clean checkout, so `make docs-audit-check` disagreed with itself across
+  two checkouts of the *same commit*, in the one gate whose whole purpose is
+  byte-equality with what the commit produces. `EXCLUDED_DIR_NAMES` was the
+  hand-maintained defence and could only ever list the build artifacts someone
+  had already been bitten by; an arbitrary untracked file was never in reach.
+
+  `tests/test_doc_audit.py::test_every_authored_doc_is_tracked_by_git` had
+  asserted this invariant since #41, and it was **red on this working tree**
+  before the change — a genuine failure that only appears when someone keeps a
+  local note, which is why it survived review. Every collector now enumerates
+  from `git ls-files` and fails closed when git cannot answer, rather than
+  falling back to a walk that silently resumes answering the different question.
+  `test_a_stray_untracked_markdown_file_cannot_move_the_counts` plants one and
+  proves `render()` is byte-identical, so the invariant no longer depends on the
+  developer's disk being tidy. The module docstring's "identical tree, identical
+  bytes" is corrected to identical *commit*, which is the property `--check`
+  actually needs.
+
 - **The pass above fixed five documents that overclaimed `make verify`/CI
   equivalence. One sentence survived it.** The README's CI/CD row still read
   "`make verify` is the literal command CI and `release.yml` run, not a parallel

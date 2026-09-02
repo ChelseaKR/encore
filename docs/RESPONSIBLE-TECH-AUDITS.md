@@ -10,8 +10,10 @@ time, never committed here). The interesting finding behind this document: a mus
 *taste* product is quietly a *sensitive-inference* product — what someone listens to
 can reveal religion, politics, sexuality, or mental state as reliably as more
 obviously sensitive data, and Encore is designed to treat it that way from the start
-rather than discovering it after a leak. Source planning material:
-`../encore-plans/06-privacy-responsible-tech.md`.
+rather than discovering it after a leak. This document and `docs/audits/dpia.md`
+are the reviewable record of that analysis; the earlier privacy draft it grew out
+of is not published in this repository, so nothing here defers to it (issue #22 —
+see the note at the head of `docs/ROADMAP.md`).
 
 ---
 
@@ -120,8 +122,8 @@ email addresses (beyond a user-supplied SMTP target), music files.
 
 ## F. Security
 
-- **Threat model:** three actors, detailed in `../encore-plans/06-privacy-responsible-tech.md`
-  §threat model: (1) a household/shared-server observer who could be outed by a taste
+- **Threat model:** three actors, stated here in full rather than deferred to an
+  unpublished draft (issue #22): (1) a household/shared-server observer who could be outed by a taste
   feed landing somewhere visible to them; (2) a token thief (stolen backup, stolen
   disk) — countered by encryption at rest with the boundary stated honestly
   (`docs/adr/0008`); (3) the developer — countered structurally, since no telemetry
@@ -166,6 +168,6 @@ email addresses (beyond a user-supplied SMTP target), music files.
 No LLM exists in this product, so RTF-09..15 (AI risk register, EU AI Act
 classification, model cards) are **N/A-with-reason** until F14 (optional "vibe"
 recommendations, deliberately last — the N/A decision and its flip trigger are
-recorded in `docs/adr/0009-ai-evaluation-not-applicable.md`; `docs/adr` gains a
-new, superseding entry the day an LLM SDK import actually lands, per
-`../encore-plans/05-standards-alignment.md` §AI-eval).
+recorded in `docs/adr/0009-ai-evaluation-not-applicable.md`, which is also where
+the rule lives that `docs/adr` gains a new, superseding entry the day an LLM SDK
+import actually lands).
