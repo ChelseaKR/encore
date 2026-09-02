@@ -8,6 +8,40 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The distribution name was Enthought's, and `__version__` was reading it.**
+  `pyproject.toml` declared `name = "encore"`. That name has belonged to Enthought,
+  Inc. on PyPI since long before this project — `encore` 0.8.0, "Low-level core
+  modules for building Python applications"
+  (<http://docs.enthought.com/encore/>) — so `make wheel` was building an artifact
+  that could never be published, and any install instruction written around the
+  name would have sent a reader to Enthought's package. The distribution is now
+  `encore-plex`, verified free on PyPI (HTTP 404 from the JSON API, 2026-09-01),
+  following the descriptive-suffix pattern this portfolio already uses for the same
+  collision class (`gauntlet-evals`, `cairn-assistant`, `nearmiss-safety`,
+  `plumbline-eval`). Nothing has been published to or claimed on PyPI; this is a
+  source-only correction.
+
+  The collision was not purely latent. `src/encore/__init__.py` single-sources
+  `__version__` from installed distribution metadata via `version("encore")` — the
+  *distribution* name, not the import name — so in any environment that also had
+  Enthought's `encore` installed, this project would have reported `0.8.0` as its
+  own version, in `/healthz`, in logs, and in the MusicBrainz User-Agent this
+  project is required to identify itself with. It now reads `version("encore-plex")`.
+
+  The import package stays `src/encore/`, and so do the console script, the
+  container entrypoint, `OTEL_SERVICE_NAME`, the `encore-data` volume, the
+  `ghcr.io/chelseakr/encore` image and the project's own name. A distribution name
+  and an import name are allowed to differ, and only the distribution collided.
+
+- **The README's install command named an image that does not exist.** The
+  Quickstart's runnable block was `docker run … ghcr.io/chelseakr/encore`. The
+  surrounding prose did say the GHCR image publishes at M4, but the command inside
+  the fence is the part a reader copies, and it fails: `ghcr.io/chelseakr/encore`
+  is unpublished (`gh api users/ChelseaKR/packages/container/encore` → 404, and an
+  anonymous registry pull is denied). The block now runs `docker build -t encore .`
+  followed by `docker run … encore`, which works today, and keeps the GHCR line as
+  a commented-out note of what it becomes at M4.
+
 - **The roadmap sent readers to a directory that is in no repository, and
   quietly failed to notice when the pointer count went to zero (issue #22).**
   `docs/ROADMAP.md` made seven references to an earlier planning corpus and

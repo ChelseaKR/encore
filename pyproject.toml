@@ -6,7 +6,16 @@ requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
-name = "encore"
+# Not `encore`: that name has been taken on PyPI since long before this project by
+# Enthought, Inc. — `encore` 0.8.0, "Low-level core modules for building Python
+# applications" (http://docs.enthought.com/encore/). A wheel built as `encore` can never
+# be published, and any install instruction written around it would send a reader to
+# Enthought's package instead of this one. The suffix names the thing this is a companion
+# to, following the portfolio's existing pattern for the same collision (gauntlet-evals,
+# cairn-assistant, nearmiss-safety, plumbline-eval). The *import* package, the console
+# script, the container's entrypoint and the project's own name all stay `encore`: a
+# distribution name and an import name are allowed to differ.
+name = "encore-plex"
 version = "0.1.0"
 description = "A free, self-hosted, notification-first companion for Plex music libraries: alerts on new releases from artists you already have, recommends what's adjacent — never downloads anything."
 readme = "README.md"
