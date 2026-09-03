@@ -133,7 +133,7 @@ OCI image.
 | mypy --strict errors | AUTO (CQ-06) | 0 | 3 | Met |
 | ruff (format+lint) | AUTO (CQ-04) | 0 findings | 1–2 | Met |
 | Semgrep HIGH/CRIT | AUTO (SEC-07) | 0 | 5 | Met — pinned Semgrep scans `p/default`, `p/python`, and Encore's no-sensitive-values-in-logs rule in `make security`; the committed waiver ledger is empty |
-| Fixable HIGH/CRIT vulns (pip-audit + osv-scanner) | AUTO (SEC-11/13) | 0 | 5 | Met (both engines wired 2026-07-09 — pip-audit on the locked env, osv-scanner on `uv.lock`) |
+| Fixable HIGH/CRIT vulns (pip-audit + osv-scanner) | AUTO (SEC-11/13) | 0 | 5 | Met (both engines wired 2026-07-09 — pip-audit on the locked third-party set exported from `uv.lock`, osv-scanner on `uv.lock`) |
 | CodeQL | AUTO (SEC-08) | 0 alerts | 5 | Python + Actions packs trigger on every `main` update, weekly, and on dispatch; private-repo SARIF is checked in-run with upload disabled (no GHAS). Actions jobs remain externally blocked until the account budget is restored (roadmap B1/U6) |
 | Secret scan (gitleaks) | AUTO (SEC-17/18) | clean | 5 | Met (pre-commit + CI) |
 | Scorecard aggregate | AUTO (SEC-37) | ≥8 | 5 | Not yet run — requires a public repo; deferred to the public/private flip |

@@ -59,7 +59,7 @@ server observer, token thief, the developer) and the guarantees the code must me
 
 - We fix secret-exposure and read-only-Plex regressions with the highest priority.
 - We credit reporters who want credit, and respect those who want anonymity.
-- Dependencies are pinned and scanned (pip-audit against the locked `uv.lock` env,
+- Dependencies are pinned and scanned (pip-audit, fail-closed, against the locked third-party set exported from `uv.lock`,
   CodeQL for python + the workflows themselves, gitleaks in pre-commit + CI + a
   weekly full-history sweep, zizmor for the workflows, Trivy on every container
   build); releases are signed once a release pipeline exists (see `docs/adr/`).
