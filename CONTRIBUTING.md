@@ -65,7 +65,7 @@ there is no second, drifted reimplementation of the gate (CQ-09, CICD-27).
 | Format + lint | `make lint` | `ruff format --check` + `ruff check`: correctness, security (bandit rules), import hygiene, cyclomatic complexity (≤10) |
 | Type | `make type` | `mypy --strict` over `src/encore` |
 | Test + coverage | `make cov` | pytest; branch coverage ≥85% |
-| Security | `make security` | Semgrep (`p/default`, `p/python`, the custom no-sensitive-log rule, plus `scripts/semgrep-test-gate.sh` proving that rule's own tests ran) + pip-audit + osv-scanner (both against the *locked* env) + gitleaks over **both** git history and the working tree |
+| Security | `make security` | Semgrep (`p/default`, `p/python`, the custom no-sensitive-log rule, plus `scripts/semgrep-test-gate.sh` proving that rule's own tests ran) + pip-audit over the locked third-party set exported from `uv.lock` (`--no-emit-project --require-hashes --strict`: this project is never looked up, and any finding fails the gate) + osv-scanner over `uv.lock` + gitleaks over **both** git history and the working tree |
 | TODO gate | `make todo-gate` | every `TODO`/`FIXME`/`HACK` names a `#issue` or an `M0`–`M4` milestone |
 | External refs | `make external-refs` | no committed file gains a reference to a path outside this repository (issue #22; ratchet against `.external-refs.yml`) |
 | Container (stage 9) | `make container-verify` | `docker build` + Trivy CVE scan (CRITICAL/HIGH, fixed-only) + `/livez` bring-up — the same target `ci.yml` runs, needs `docker` and `trivy` on `PATH` and fails closed without them |

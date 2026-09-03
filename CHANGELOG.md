@@ -8,6 +8,31 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`make security` could not fail on a dependency advisory, and on `main` it was
+  auditing Enthought's package as this project.** The dependency step was a bare
+  `uv run pip-audit` over the installed environment. Without `--strict`, a
+  distribution pip-audit cannot resolve is *skipped* with a note and the exit code
+  stays 0, so a step whose one job is to fail on findings had a path to green that
+  did not depend on them. The installed environment also includes this project's
+  own editable distribution, and pip-audit resolves a distribution by asking PyPI
+  about its name and version. Measured on a copy of `main`, where the distribution
+  was still named `encore` 0.1.0: no skip row, `Auditing encore (0.1.0)`, "No
+  known vulnerabilities found". PyPI answers 200 for `encore/0.1.0` because
+  Enthought published `encore` 0.1 and PEP 440 reads `0.1.0` as the same version;
+  the gate was asking whether a stranger's release has advisories, and was green
+  because that answer happens to be no. Under the corrected name `encore-plex`
+  (above) the same lookup 404s, so adding `--strict` alone fails the gate for the
+  wrong reason.
+
+  `make security` now depends on a new `make audit`, which audits the locked
+  third-party set exported from `uv.lock`: `uv export --locked --no-emit-project`
+  with the same selectors as `make install`, then `pip-audit --strict
+  --require-hashes`. This project is never looked up, and every one of the 80 real
+  dependencies fails closed, hashes included. Same shape as chalkline's
+  `make audit`. Proven able to fail: a scratch copy with `jinja2==3.1.3` pinned
+  exits 1 with four advisories (PYSEC-2026-1471, -1472, -1474, -1475). CI calls
+  `make security` by name, so no workflow changed.
+
 - **The distribution name was Enthought's, and `__version__` was reading it.**
   `pyproject.toml` declared `name = "encore"`. That name has belonged to Enthought,
   Inc. on PyPI since long before this project — `encore` 0.8.0, "Low-level core

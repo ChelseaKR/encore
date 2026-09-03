@@ -3,7 +3,7 @@
 # locally means green in CI (CICD-27).
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format type test cov security responsible todo-gate slo-check citation-check i18n-check i18n-extract docs-audit docs-audit-check wheel serve verify clean \
+.PHONY: help install lint format type test cov audit security responsible todo-gate slo-check citation-check i18n-check i18n-extract docs-audit docs-audit-check wheel serve verify clean \
         container-tools container-build container-scan container-bringup container-verify \
         external-refs
 
@@ -43,8 +43,33 @@ test: ## Run the test suite
 cov: ## Run tests with a coverage report (branch >=85% — CQ-08)
 	uv run pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=85
 
-security: ## SAST + dependency + secret scans (SEC-07/11/13/17)
-	uv run pip-audit
+audit: ## Dependency audit of the locked third-party set from uv.lock, fail-closed (SEC-11)
+	# This was `uv run pip-audit`, bare, and it could not fail on a finding. Without
+	# `--strict` a distribution pip-audit cannot resolve is *skipped* with a note and
+	# the exit code stays 0. Worse, auditing the installed environment means auditing
+	# this project's own editable distribution too, and pip-audit resolves one by
+	# asking PyPI about its name and version. Measured on a copy of main, where the
+	# distribution was still named `encore` 0.1.0: no skip row, `Auditing encore
+	# (0.1.0)`, green. PyPI answers 200 for `encore/0.1.0` because Enthought
+	# published `encore` 0.1 and PEP 440 reads `0.1.0` as the same version, so the
+	# gate was auditing a stranger's release as this project. Under the correct,
+	# deliberately unpublished name `encore-plex` (#43) the same lookup 404s, so
+	# adding `--strict` alone fails the gate for the wrong reason. Neither is the
+	# question the audit asks: this project has no PyPI release to have advisories
+	# against, and what needs auditing is what it depends on.
+	#
+	# So audit the locked dependency set exported from `uv.lock`, not the environment.
+	# `--no-emit-project` drops this project from the export so it is never looked
+	# up; `--require-hashes` audits the hashes `uv.lock` already pins; `--strict`
+	# fails closed on every real dependency. The export takes the same selectors as
+	# `make install` (`--all-extras --group dev`), so the audited set is the synced
+	# set. Same shape as chalkline's `make audit`. Proven able to fail: a scratch
+	# copy with `jinja2==3.1.3` pinned exits 1 with that pin's four advisories.
+	@req=$$(mktemp); trap 'rm -f "$$req"' EXIT; \
+	uv export --locked --format requirements-txt --no-emit-project --all-extras --group dev >"$$req"; \
+	uv run pip-audit --strict --require-hashes -r "$$req"
+
+security: audit ## SAST + dependency + secret scans (SEC-07/11/13/17)
 	osv-scanner scan source --lockfile uv.lock
 	gitleaks detect --source . --config .gitleaks.toml --no-banner --redact
 	# History mode (above) cannot see a secret that is written but not yet
