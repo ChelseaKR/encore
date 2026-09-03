@@ -449,7 +449,7 @@ wheels = [
 ]
 
 [[package]]
-name = "encore"
+name = "encore-plex"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

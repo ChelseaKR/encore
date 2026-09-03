@@ -25,11 +25,16 @@ make verify    # the whole merge gate; the Makefile's `verify` target lists the 
 make serve     # run the dev server
 ```
 
-Running the actual product (the GHCR image publishes at M4 — until then, build the
-image locally with `docker build`):
+Running the actual product. **`ghcr.io/chelseakr/encore` does not exist yet** — the
+GHCR image publishes at M4 (`docs/ROADMAP.md` §8), and pulling it today fails. Until
+then the image is built locally, which is the command below:
 
 ```sh
-docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
+docker build -t encore .
+docker run -v encore-data:/data -p 8321:8321 encore
+
+# At M4 this becomes a pull, and the build step goes away:
+#   docker run -v encore-data:/data -p 8321:8321 ghcr.io/chelseakr/encore
 ```
 
 ## Why this exists
