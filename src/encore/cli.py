@@ -58,6 +58,7 @@ from encore.artistsettings import (
     parse_secondary_types,
     parse_settings_json,
 )
+from encore.backup import BackupError, create_backup, restore_backup
 from encore.doctor import exit_code as doctor_exit_code
 from encore.doctor import render_json as doctor_render_json
 from encore.doctor import render_text as doctor_render_text
@@ -67,14 +68,21 @@ from encore.matching.explain import audit_record, explain_match
 from encore.matching.explain import render_json as explain_render_json
 from encore.matching.explain import render_text as explain_render_text
 from encore.matching.mb import MusicBrainzClient
-from encore.models import CHANNEL_MODES
+from encore.models import CHANNEL_MODES, utcnow
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
 from encore.plex import PlexMusicClient, PlexWriteAttemptError
 from encore.recommend.engine import PROVENANCE_LIMIT, refresh_recommendations
 from encore.recommend.lb import ListenBrainzClient
 from encore.secretstore import SecretDecryptionError
-from encore.storage import DATA_DIR_ENV, Storage, StorageError, resolve_data_dir
+from encore.storage import (
+    DATA_DIR_ENV,
+    DB_FILENAME,
+    KEY_FILENAME,
+    Storage,
+    StorageError,
+    resolve_data_dir,
+)
 from encore.sync import SyncError, sync_artists
 from encore.watch import watch_all_artists
 
@@ -107,6 +115,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     doctor.add_argument(
         "--json", action="store_true", dest="as_json", help="Emit the report as JSON."
+    )
+
+    backup = subparsers.add_parser(
+        "backup",
+        help="Write one consistent, verified snapshot of the data directory to a tar archive",
+    )
+    backup.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    backup.add_argument(
+        "--out",
+        required=True,
+        metavar="PATH",
+        help="Archive to write. It contains the Fernet key: treat it as a secret "
+        "and store it where the live key would be safe.",
+    )
+
+    restore = subparsers.add_parser(
+        "restore",
+        help="Rebuild a data directory from a backup archive, verifying it first",
+    )
+    restore.add_argument("archive", metavar="ARCHIVE", help="The tar archive written by `backup`")
+    restore.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    restore.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace the contents of a non-empty data directory (default: refuse)",
     )
 
     sync = subparsers.add_parser("sync", help="Run one on-demand Plex library sync (F1)")
@@ -1194,9 +1227,54 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return doctor_exit_code(results)
 
 
+def _cmd_backup(args: argparse.Namespace) -> int:
+    """Write a verified snapshot of the data directory (issue #53)."""
+    data_dir = resolve_data_dir(args.data_dir)
+    try:
+        result = create_backup(data_dir, out_path=args.out, created_at=utcnow().isoformat())
+    except BackupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Wrote {result.archive} (schema v{result.schema_version}, encore {result.encore_version})."
+    )
+    print(f"  {DB_FILENAME}  sha256:{result.digests[DB_FILENAME]}")
+    print(f"  {KEY_FILENAME} sha256:{result.digests[KEY_FILENAME]}")
+    print(
+        "This archive contains the Fernet key, so it can decrypt every stored secret. "
+        "Store it as you would the key itself."
+    )
+    return 0
+
+
+def _cmd_restore(args: argparse.Namespace) -> int:
+    """Verify an archive and rebuild a data directory from it (issue #53)."""
+    data_dir = resolve_data_dir(args.data_dir)
+    try:
+        result = restore_backup(args.archive, data_dir, force=args.force)
+    except BackupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Restored {result.data_dir} from {args.archive}.")
+    if result.migrated:
+        print(
+            f"  schema  v{result.schema_version_in_archive} in the archive, "
+            f"migrated forward to v{result.schema_version_after}"
+        )
+    else:
+        print(f"  schema  v{result.schema_version_after}")
+    # `skipped` is printed as `skipped`. An operator restoring a database that
+    # happens to hold no ciphertext is told the pairing was never tested, not
+    # shown a tick the archive did not earn.
+    print(f"  key pairing  {result.key_pairing.value}: {result.key_pairing_reason}")
+    return 0
+
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
     "doctor": _cmd_doctor,
+    "backup": _cmd_backup,
+    "restore": _cmd_restore,
     "sync": _cmd_sync,
     "match": _cmd_match,
     "matches": _cmd_matches,
