@@ -47,7 +47,7 @@ These are real predicates, so they can pass or fail.
 | Root process docs | pass | `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md` |
 | Root legal, citation, and conduct docs | pass | `LICENSE`, `NOTICE`, `CITATION.cff`, `CODE_OF_CONDUCT.md` |
 | Root-adjacent GitHub templates | pass | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/CODEOWNERS` |
-| Local doc links resolve | pass | 32 relative links checked in 31 Markdown files; 0 unresolved |
+| Local doc links resolve | pass | 32 relative links checked in 32 Markdown files; 0 unresolved |
 
 ## Inventory
 
@@ -55,8 +55,8 @@ Counts, not verdicts. A count cannot pass or fail; it can only be current, which
 
 | Surface | Count | Evidence |
 | --- | ---: | --- |
-| Hand-authored docs | 35 | Markdown at the repository root and under `.github/` and `docs/`, plus the root legal and template files |
-| Test modules | 32 | `tests/test_*.py` |
+| Hand-authored docs | 36 | Markdown at the repository root and under `.github/` and `docs/`, plus the root legal and template files |
+| Test modules | 33 | `tests/test_*.py` |
 | Test support files | 4 | other `tests/*.py` (fixtures, `__init__.py`) |
 | Workflow files | 5 | `.github/workflows/*.yml` |
 | Gate scripts | 8 | `scripts/*` (lint and mypy cover these to the same standard as `src`) |
@@ -69,7 +69,7 @@ Up to 5 representative files per category; the complete list follows below.
 | --- | ---: | --- |
 | architecture and interfaces | 15 | `docs/adr/0000-record-architecture-decisions.md`, `docs/adr/0001-release-group-level-watching.md`, `docs/adr/0002-poll-dont-webhook.md`, `docs/adr/0003-metabrainz-sole-metadata-supplier.md`, `docs/adr/0004-server-rendered-htmx-ui.md`, plus 10 more |
 | entry points and repo process | 10 | `.github/CODEOWNERS`, `.github/PULL_REQUEST_TEMPLATE.md`, `CHANGELOG.md`, `CITATION.cff`, `CODE_OF_CONDUCT.md`, plus 5 more |
-| other docs | 4 | `DEFINITION_OF_DONE.md`, `docs/I18N.md`, `docs/PROJECT-SCOPE.md`, `docs/README.md` |
+| other docs | 5 | `DEFINITION_OF_DONE.md`, `docs/I18N.md`, `docs/PROJECT-SCOPE.md`, `docs/README.md`, `docs/how-matching-decides.md` |
 | planning and research | 1 | `docs/ROADMAP.md` |
 | safety, privacy, accessibility, and audits | 5 | `docs/DOCUMENTATION-AUDIT.md`, `docs/RESPONSIBLE-TECH-AUDITS.md`, `docs/audits/dpia.md`, `docs/audits/residual-risk.md`, `docs/audits/security-threat-model.md` |
 
@@ -110,6 +110,7 @@ Up to 5 representative files per category; the complete list follows below.
 - `tests/test_i18n.py`
 - `tests/test_match_storage.py`
 - `tests/test_matching_engine.py`
+- `tests/test_matching_explain.py`
 - `tests/test_matching_scoring.py`
 - `tests/test_mb_browse.py`
 - `tests/test_mb_client.py`
@@ -168,6 +169,7 @@ Up to 5 representative files per category; the complete list follows below.
 - `docs/audits/dpia.md`
 - `docs/audits/residual-risk.md`
 - `docs/audits/security-threat-model.md`
+- `docs/how-matching-decides.md`
 
 <!-- END GENERATED: doc-audit -->
 

@@ -37,7 +37,10 @@ __all__ = [
     "AUTO_MATCH_THRESHOLD",
     "ArtistHints",
     "MatchDecision",
+    "ScoreTerm",
     "decide",
+    "decision_reason",
+    "explain_candidate",
     "normalize_name",
     "score_candidate",
 ]
@@ -182,3 +185,123 @@ def decide(
         confidence=min(best_raw, 1.0),
         ranked=ranked,
     )
+
+
+@dataclass(frozen=True)
+class ScoreTerm:
+    """One addend of a candidate's score, with the reason it has that value.
+
+    `explain_candidate` returns these, and
+    `tests/test_matching_explain.py::test_the_terms_sum_to_the_score` holds
+    their sum against `score_candidate` for every fixture. That equality is
+    the whole point: an explanation that does not add up to the number it
+    explains is a story about a different computation, which is worse than no
+    explanation at all because it reads as authoritative.
+    """
+
+    name: str
+    value: float
+    detail: str
+
+
+def explain_candidate(
+    hints: ArtistHints, candidate: ArtistCandidate
+) -> tuple[float, tuple[ScoreTerm, ...]]:
+    """Return `score_candidate`'s result and the terms that produced it.
+
+    Deliberately re-derives each addend rather than instrumenting
+    `score_candidate`: the scorer stays a pure function nobody has to read
+    around, and the invariant test compares two independent computations. If
+    the two ever disagree, the test fails rather than the report quietly
+    describing something the matcher did not do.
+    """
+    terms: list[ScoreTerm] = []
+
+    name = _name_component(hints.name, candidate)
+    if name == 1.0:
+        detail = f"exact name match on {candidate.name!r} after normalization"
+    elif name == _ALIAS_SCORE:
+        detail = f"exact match on one of {len(candidate.aliases)} alias(es)"
+    else:
+        detail = (
+            f"fuzzy name similarity, bounded by the {_FUZZY_CEILING} ceiling "
+            f"(no exact name or alias match)"
+        )
+    terms.append(ScoreTerm("name", name, detail))
+
+    prior = (candidate.mb_score / 100) * _MB_PRIOR_WEIGHT
+    terms.append(
+        ScoreTerm(
+            "mb_prior",
+            prior,
+            f"MusicBrainz's own search score {candidate.mb_score}/100, weighted {_MB_PRIOR_WEIGHT}",
+        )
+    )
+
+    for label, hint, actual in (
+        ("type_hint", hints.type_hint, candidate.artist_type),
+        ("country_hint", hints.country_hint, candidate.country),
+    ):
+        value = _hint_component(hint, actual)
+        if hint is None or actual is None:
+            detail = "not applied: no hint on one side or the other"
+        elif value > 0:
+            detail = f"hint {hint!r} corroborates"
+        else:
+            detail = f"hint {hint!r} contradicts {actual!r}"
+        terms.append(ScoreTerm(label, value, detail))
+
+    boost = 0.0
+    if hints.guid_mbid is None:
+        detail = "not applied: Plex supplied no GUID MBID for this artist"
+    elif hints.guid_mbid != candidate.mbid:
+        detail = "not applied: the Plex GUID names a different MBID"
+    elif name < _ALIAS_SCORE:
+        # Issue #32: the boost used to apply on a merely-fuzzy name, so a
+        # one-character difference could auto-match on the GUID alone.
+        detail = (
+            f"not applied: the GUID matches, but the name component {name:.3f} is "
+            f"below {_ALIAS_SCORE} — a GUID strengthens a plausible candidate, it "
+            "does not rescue a name mismatch (issue #32)"
+        )
+    else:
+        boost = _GUID_BOOST
+        detail = "the Plex GUID names this MBID and the name already matches exactly"
+    terms.append(ScoreTerm("guid_boost", boost, detail))
+
+    return score_candidate(hints, candidate), tuple(terms)
+
+
+# The machine-stable reason a decision came out the way it did. Recorded at
+# match time so a stored decision explains itself even after the thresholds
+# move; a row written before this existed reads `unrecorded`, which is a
+# different fact from any of these and must not be rendered as one of them.
+DECISION_REASONS = (
+    "auto-matched",
+    "ambiguous",
+    "below-threshold",
+    "no-candidates",
+    "unrecorded",
+)
+
+
+def decision_reason(
+    decision: MatchDecision,
+    auto_threshold: float = AUTO_MATCH_THRESHOLD,
+    ambiguity_margin: float = AMBIGUITY_MARGIN,
+) -> str:
+    """Why `decide` returned what it did, as one of `DECISION_REASONS`.
+
+    Mirrors `decide`'s own branches. `tests/test_matching_explain.py` holds
+    the two against each other over every fixture, because a reason derived
+    from a second reading of the same inputs is only trustworthy while the
+    two readings agree.
+    """
+    if not decision.ranked:
+        return "no-candidates"
+    best = decision.ranked[0][1]
+    if decision.status == "auto":
+        return "auto-matched"
+    if best < auto_threshold:
+        return "below-threshold"
+    return "ambiguous"

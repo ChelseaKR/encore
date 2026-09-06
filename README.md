@@ -121,6 +121,29 @@ encore/
 Full technical plan (data model, the sync/watch and recommend pipelines, the
 MusicBrainz rate budget) lives in the ADRs under `docs/adr/`.
 
+## Why did it match that?
+
+`encore matches explain --artist-key KEY` prints the arithmetic behind one
+identity decision: the hints the scorer was given, every candidate with its
+score broken into named terms, and the sentence that decided the outcome.
+`--json` emits the same document. It never re-queries MusicBrainz — it is a
+reading of what is on disk, so it shows the evidence as it stood when the
+decision was made.
+
+The breakdown is re-derived and its terms are held against the scorer's own
+result by a test, so what you read adds up to the number beside it. Where the
+row cannot support that — a decision recorded before the evidence was kept, or
+an artist that has never been through the matcher — it says so in one line
+rather than printing a table of zeroes that look like measurements.
+
+`encore matches audit --out audit.jsonl` dumps every current decision with its
+evidence and an empty `correct` column: the sample sheet the U8 validation
+spike needs to turn "≥90% auto-match" into a measured number rather than an
+asserted one.
+
+`docs/how-matching-decides.md` explains the terms and thresholds, and every
+figure on that page is checked against `src/encore/matching/scoring.py`.
+
 ## Diagnosing a quiet install
 
 `encore doctor` is the single answer to "why did my alerts stop". It runs a

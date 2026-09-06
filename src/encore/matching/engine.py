@@ -25,6 +25,7 @@ from encore.matching.scoring import (
     ArtistHints,
     MatchDecision,
     decide,
+    decision_reason,
 )
 from encore.models import ArtistMatch
 from encore.storage import Storage
@@ -84,7 +85,17 @@ def run_matching_pass(storage: Storage, client: MusicBrainzClient) -> MatchingRe
 
 
 def _candidates_to_json(decision: MatchDecision) -> str:
-    """Serialize the ranked candidates for the review queue to display."""
+    """Serialize the ranked candidates for the review queue and for explain.
+
+    The first six keys are what the review queue displays and have been
+    stored since F2. The last three are the scorer's own inputs, added so
+    `encore matches explain` can re-derive the breakdown offline and have it
+    add up to the score recorded beside it. Without them the stored row held
+    the *output* of the match and none of the evidence, and any later
+    explanation would have been a plausible reconstruction rather than the
+    real one. Still a JSON list, so `candidates_from_json` and every existing
+    reader are unaffected.
+    """
     return json.dumps(
         [
             {
@@ -94,9 +105,24 @@ def _candidates_to_json(decision: MatchDecision) -> str:
                 "type": candidate.artist_type,
                 "country": candidate.country,
                 "disambiguation": candidate.disambiguation,
+                "mb_score": candidate.mb_score,
+                "sort_name": candidate.sort_name,
+                "aliases": list(candidate.aliases),
             }
             for candidate, score in decision.ranked
         ]
+    )
+
+
+def _hints_to_json(hints: ArtistHints) -> str:
+    """Serialize the hints the scorer was given, for later explanation."""
+    return json.dumps(
+        {
+            "name": hints.name,
+            "guid_mbid": hints.guid_mbid,
+            "type_hint": hints.type_hint,
+            "country_hint": hints.country_hint,
+        }
     )
 
 
@@ -153,7 +179,7 @@ class MatchEngine:
             auto_threshold=self._auto_threshold,
             ambiguity_margin=self._ambiguity_margin,
         )
-        row = self._persist_decision(artist_key, hints.name, decision)
+        row = self._persist_decision(artist_key, hints.name, decision, hints)
         logger.info(
             "match decided for artist_key=%s: status=%s from %d candidate(s)",
             artist_key,
@@ -163,9 +189,13 @@ class MatchEngine:
         return row
 
     def _persist_decision(
-        self, artist_key: str, artist_name: str, decision: MatchDecision
+        self,
+        artist_key: str,
+        artist_name: str,
+        decision: MatchDecision,
+        hints: ArtistHints | None = None,
     ) -> ArtistMatch:
-        """Write an auto or pending decision through the storage layer."""
+        """Write an auto or pending decision, with the evidence behind it."""
         chosen: ArtistCandidate | None = decision.chosen
         return self._storage.save_artist_match(
             artist_key=artist_key,
@@ -174,6 +204,8 @@ class MatchEngine:
             mbid=chosen.mbid if chosen is not None else None,
             confidence=decision.confidence,
             candidates_json=_candidates_to_json(decision),
+            hints_json=None if hints is None else _hints_to_json(hints),
+            decision_reason=decision_reason(decision, self._auto_threshold, self._ambiguity_margin),
         )
 
     def review_queue(self) -> list[ArtistMatch]:
