@@ -8,6 +8,24 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The doc audit names what it could not see.** `scripts/doc_audit.py` enumerates
+  git-tracked files on purpose (`9f8ba81`: a filesystem walk let an untracked scratch
+  note move the counts, so `--check` disagreed with itself across two checkouts of the
+  same commit). The cost of that fix is that a *newly added* test module or document is
+  invisible until `git add`, so `make docs-audit-check` prints OK over a tree it cannot
+  see all of, and the failure it was going to produce arrives later, at push. That is
+  the papercut recorded in #73, and reporting green over an incomplete view is the shape
+  this repository treats as its worst case. It now lists those files on stderr, as a
+  note and not a finding: the exit status is still 0, because the inventory is still
+  correct for the commit, and nothing reaches the rendered block. `--exclude-standard`
+  honours `.gitignore`, so build artifacts are out by construction rather than by a
+  hand-maintained list. Two tests hold both directions — the note fires and names the
+  file while `render()` stays byte-identical, and a clean tree gets no note, because a
+  warning that always prints is a warning nobody reads.
+
+  This does **not** address #73's main finding, the merge-order collapse that turned two
+  green PRs into a red `main`; that issue's three options are deliberately left open.
+
 - **`encore channels route` — each channel subscribes to a slice of events.**
   Fan-out was all-or-nothing: every enabled channel got every deliverable
   event, so a loud phone channel and a quiet email digest could not coexist
