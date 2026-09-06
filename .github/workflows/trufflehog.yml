@@ -1,4 +1,4 @@
-# Scheduled full-history verified-secret scan (SEC-19). gitleaks already covers
+# Scheduled full-history secret scan (SEC-19). gitleaks already covers
 # Gates 1-2 (pre-commit + CI diff, see .pre-commit-config.yaml and ci.yml's
 # "security" job); this is Gate 3 — a periodic sweep of the *entire* commit
 # history with a different engine and its own detector set, catching anything a
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   scan:
-    name: full-history secret scan (verified only)
+    name: full-history secret scan
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
@@ -32,7 +32,7 @@ jobs:
         with:
           fetch-depth: 0  # full clone — this is a whole-history scan, not a diff
           persist-credentials: false
-      - name: TruffleHog (verified secrets only)
+      - name: TruffleHog (full history, all reported tiers)
         uses: trufflesecurity/trufflehog@00155c9dc586f34d189adc83d3ac2698c2ec551f  # v3.95.8
         with:
           path: ./
@@ -41,16 +41,45 @@ jobs:
           # above does not pin what actually scans. That is how this gate changed
           # behaviour with no commit here: upstream published 3.96.0 and the next
           # run picked it up.
-          version: "3.96.0"
+          #
+          # This input and the `uses:` SHA above must name the SAME release. They
+          # did not: the SHA is v3.95.8 and this said 3.96.0, so the action's own
+          # code and the scanner it ran came from different versions. Dependabot
+          # only edits the `uses:` line, so the drift widens on its own -- bump
+          # both together, and keep the trailing comment on `uses:` accurate.
+          version: "3.95.8"
           # `--fail` is not passed. The action's own command already includes it
           # and repeating a flag is a hard CLI error, so this scan exited 1 at
           # startup having read nothing: no chunk count, no findings, no coverage.
-          # Lob is excluded because 3.96.0's Lob detector pattern,
+          # Lob is excluded because its detector pattern,
           # `\b((live|test)_[a-zA-Z0-9_]{35})\b`, matches any identifier starting
           # `test_` with exactly 35 word characters after it, which is an ordinary
           # pytest function name. Its verifier then POSTs to api.lob.com and reads the
           # 403 as proof of a live key with no billing attached, so matches are
           # promoted to verified. The first scan that actually ran here reported 9,
           # every one a test name. There is no Lob integration in this repo. Same
-          # reasoning as gtfs-scorecard ADR 0044.
-          extra_args: --only-verified --exclude-detectors=Lob
+          # reasoning as gtfs-scorecard ADR 0044. (Still true at 3.95.8 and 3.97.1;
+          # the pattern is not version-specific.)
+          #
+          # --results=verified,unknown,unverified, not `--only-verified`. TruffleHog
+          # sorts a candidate three ways: `verified` (it authenticated against the
+          # live service), `unverified` (it asked, and the service said no) and
+          # `unknown` (it could not ask). A credential that was committed and later
+          # REVOKED comes back `unverified` -- the revocation is what makes the
+          # provider say no -- and a cleaned-up leak is the whole reason a scheduled
+          # full-history scan exists. `--only-verified` therefore could not fail on
+          # the case this gate was built for. Measured 2026-09-06 on a throwaway
+          # clone with a real-shaped (not vendor-example) AWS key planted in one
+          # commit and deleted in the next, confirmed present in history and absent
+          # at HEAD:
+          #
+          #   --only-verified                        exit 0,   0 reported
+          #   --results=verified,unknown             exit 0,   0 reported
+          #   --results=verified,unknown,unverified  exit 183, unverified_secrets: 1
+          #
+          # The cost of widening was measured here before it was made: this
+          # repository's full history (857 chunks, 1.5 MB) reports zero findings
+          # under all three tiers with the Lob exclusion above, at both 3.95.8 and
+          # 3.97.1. If another placeholder ever fires, exclude that detector by name
+          # -- as Lob is -- rather than narrowing back to a tier.
+          extra_args: --results=verified,unknown,unverified --exclude-detectors=Lob
