@@ -129,6 +129,7 @@ Up to 5 representative files per category; the complete list follows below.
 - `tests/test_storage.py`
 - `tests/test_sync.py`
 - `tests/test_watch_engine.py`
+- `tests/test_workflow_concurrency.py`
 
 ## Package metadata
 
