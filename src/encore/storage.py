@@ -12,6 +12,7 @@ down-migration story, matching the single-operator deployment model
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 from collections.abc import Callable, Sequence
@@ -33,6 +34,13 @@ from encore.artistsettings import (
     canonical_override_json,
     parse_settings_json,
     resolve_effective,
+)
+from encore.channelroute import (
+    ChannelRoute,
+    RoutableEvent,
+    canonical_route_json,
+    channel_accepts,
+    parse_route_json,
 )
 from encore.models import (
     CHANNEL_MODES,
@@ -70,6 +78,8 @@ DB_FILENAME = "encore.db"
 KEY_FILENAME = "encore.key"
 DATA_DIR_ENV = "ENCORE_DATA_DIR"
 DEFAULT_DATA_DIR = "data"
+
+logger = logging.getLogger(__name__)
 
 
 class StorageError(Exception):
@@ -236,6 +246,19 @@ def _migration_0012_match_evidence(connection: Connection) -> None:
         connection.exec_driver_sql("ALTER TABLE artist_matches ADD COLUMN decision_reason TEXT")
 
 
+def _migration_0013_channel_routes(connection: Connection) -> None:
+    """v13: add ``channels.route_json`` — per-channel routing rules (issue #65).
+
+    NULL means "this channel takes everything", which is exactly today's
+    fan-out, so an existing database migrates to identical behaviour.
+    Guarded: no-op on fresh, ALTER on an existing table.
+    """
+    SQLModel.metadata.create_all(connection)
+    columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(channels)")}
+    if "route_json" not in columns:
+        connection.exec_driver_sql("ALTER TABLE channels ADD COLUMN route_json TEXT")
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -251,6 +274,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0010_recommendations,
     _migration_0011_scheduler_heartbeats,
     _migration_0012_match_evidence,
+    _migration_0013_channel_routes,
 )
 
 
@@ -867,6 +891,17 @@ class Storage:
             policies = self.effective_watch_settings_for_mbids(
                 [group.artist_mbid for group in group_rows.values()]
             )
+            # One extra pass over rows already in hand, so routing costs no
+            # query per event: which Plex rows own each identity, and hence
+            # each event's library keys, artist keys, and source.
+            owners = self._owners_by_mbid(
+                session, {group.artist_mbid for group in group_rows.values()}
+            )
+            routes = {
+                channel.id: self._route_of(channel)
+                for channel in channels
+                if channel.id is not None
+            }
             existing = {
                 (delivery.event_id, delivery.channel_id)
                 for delivery in session.exec(
@@ -885,9 +920,93 @@ class Storage:
                     session.add(event)
                     muted_skipped += 1
                     continue
-                created += self._create_missing_deliveries(session, event, channels, existing, now)
+                routable = self._routable_event(group, policy, owners)
+                created += self._create_missing_deliveries(
+                    session, event, channels, existing, now, routable, routes
+                )
             session.commit()
         return created, muted_skipped
+
+    @staticmethod
+    def _owners_by_mbid(session: Session, artist_mbids: set[str]) -> dict[str, list[Artist]]:
+        """Live Plex rows owning each identity; an unowned MBID maps to ``[]``.
+
+        Total over ``artist_mbids``: an F8-promoted identity deliberately has
+        no Plex row, and the caller must be able to tell that apart from an
+        identity it simply failed to look up (issue #33's shape).
+        """
+        result: dict[str, list[Artist]] = {mbid: [] for mbid in artist_mbids}
+        if not artist_mbids:
+            return result
+        matches = session.exec(
+            select(ArtistMatch).where(
+                col(ArtistMatch.mbid).in_(artist_mbids),
+                ArtistMatch.status.in_(("auto", "manual")),  # type: ignore[attr-defined]
+            )
+        ).all()
+        keys_by_mbid: dict[str, list[str]] = {}
+        for match in matches:
+            if match.mbid is not None:
+                keys_by_mbid.setdefault(match.mbid, []).append(match.artist_key)
+        all_keys = {key for keys in keys_by_mbid.values() for key in keys}
+        if not all_keys:
+            return result
+        rows = {
+            row.plex_rating_key: row
+            for row in session.exec(
+                select(Artist).where(col(Artist.plex_rating_key).in_(all_keys))
+            ).all()
+            if row.removed_at is None
+        }
+        for mbid, keys in keys_by_mbid.items():
+            result[mbid] = [rows[key] for key in keys if key in rows]
+        return result
+
+    @staticmethod
+    def _routable_event(
+        group: ReleaseGroup | None,
+        policy: ArtistWatchSettings | None,
+        owners: dict[str, list[Artist]],
+    ) -> RoutableEvent:
+        """Describe one event in the terms a route may ask about."""
+        secondary: tuple[str, ...] = ()
+        if group is not None and group.secondary_types_json:
+            try:
+                parsed = json.loads(group.secondary_types_json)
+            except json.JSONDecodeError:
+                parsed = []
+            if isinstance(parsed, list):
+                secondary = tuple(str(item) for item in parsed)
+        rows = owners.get(group.artist_mbid, []) if group is not None else []
+        return RoutableEvent(
+            priority=policy.priority if policy is not None else PRIORITY_NORMAL,
+            primary_type=group.primary_type if group is not None else None,
+            secondary_types=secondary,
+            library_keys=frozenset(row.library_key for row in rows),
+            artist_keys=frozenset(row.plex_rating_key for row in rows),
+            # No live Plex owner means the identity reached the watch pool by
+            # F8 promotion, which is the only other door today.
+            source="plex" if rows else "promoted",
+        )
+
+    @staticmethod
+    def _route_of(channel: NotificationChannel) -> ChannelRoute:
+        """Return a channel's stored route.
+
+        A blob that no longer parses is treated as no route at all rather
+        than raised: a channel is a delivery path, and taking it down because
+        its filter became unreadable would turn a narrowing rule into an
+        outage. The unreadable route is logged so it is not silent.
+        """
+        try:
+            return parse_route_json(channel.route_json)
+        except SettingsError:
+            logger.warning(
+                "channel %r has an unreadable route; delivering everything to it "
+                "until it is rewritten with `encore channels route`",
+                channel.name,
+            )
+            return ChannelRoute()
 
     @staticmethod
     def _create_missing_deliveries(
@@ -896,8 +1015,16 @@ class Storage:
         channels: Sequence[NotificationChannel],
         existing: set[tuple[int, int]],
         now: datetime,
+        routable: RoutableEvent,
+        routes: dict[int, ChannelRoute],
     ) -> int:
-        """Insert absent (event, channel) rows; return how many were created."""
+        """Insert absent (event, channel) rows; return how many were created.
+
+        A channel whose route declines this event gets no row at all — the
+        event is never materialised for it, so it cannot later be retried,
+        counted, or reported as suppressed. That is the F10 shape: routing,
+        like muting, silences deliveries and leaves the feeds complete.
+        """
         if event.id is None:  # pragma: no cover - persisted rows always have one
             return 0
         created = 0
@@ -908,9 +1035,69 @@ class Storage:
                 continue
             if (event.id, channel.id) in existing:
                 continue
+            if not channel_accepts(routable, routes.get(channel.id, ChannelRoute())):
+                continue
             session.add(Delivery(event_id=event.id, channel_id=channel.id, next_attempt_at=now))
             created += 1
         return created
+
+    def set_channel_route(self, name: str, route: ChannelRoute) -> NotificationChannel:
+        """Replace one channel's routing rule (an empty route clears it).
+
+        Validated against the *live* library keys, so a rule that could never
+        match is refused when it is written rather than delivering nothing
+        forever.
+
+        Raises:
+            StorageError: no such channel, or the route names a value that
+                could never match.
+        """
+        canonical = canonical_route_json(route)
+        if canonical is not None:
+            try:
+                parse_route_json(canonical, known_library_keys=self.known_library_keys())
+            except SettingsError as exc:
+                raise StorageError(str(exc)) from exc
+        with self.session() as session:
+            channel = session.exec(
+                select(NotificationChannel).where(NotificationChannel.name == name)
+            ).first()
+            if channel is None:
+                raise StorageError(f"no channel named {name!r}")
+            channel.route_json = canonical
+            session.add(channel)
+            session.commit()
+            session.refresh(channel)
+            return channel
+
+    def get_channel_route(self, name: str) -> ChannelRoute:
+        """One channel's stored route (empty when unrouted).
+
+        Raises:
+            StorageError: no such channel, or its stored route is unreadable.
+        """
+        with self.session() as session:
+            channel = session.exec(
+                select(NotificationChannel).where(NotificationChannel.name == name)
+            ).first()
+        if channel is None:
+            raise StorageError(f"no channel named {name!r}")
+        try:
+            return parse_route_json(channel.route_json)
+        except SettingsError as exc:
+            raise StorageError(f"stored route for {name!r} is invalid: {exc}") from exc
+
+    def known_library_keys(self) -> frozenset[str]:
+        """Every library key any artist row carries, tombstones included.
+
+        Tombstones count: a library that is temporarily empty or a row that
+        vanished on one sync must not make an operator's existing rule look
+        like a typo.
+        """
+        with self.session() as session:
+            return frozenset(
+                row.library_key for row in session.exec(select(Artist)).all() if row.library_key
+            )
 
     def due_deliveries(self, channel_id: int, now: datetime) -> list[Delivery]:
         """Return pending deliveries for one channel whose backoff has elapsed."""

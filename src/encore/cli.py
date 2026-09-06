@@ -59,6 +59,11 @@ from encore.artistsettings import (
     parse_settings_json,
 )
 from encore.backup import BackupError, create_backup, restore_backup
+from encore.channelroute import (
+    KNOWN_SOURCES,
+    ChannelRoute,
+    describe_route,
+)
 from encore.doctor import exit_code as doctor_exit_code
 from encore.doctor import render_json as doctor_render_json
 from encore.doctor import render_text as doctor_render_text
@@ -306,6 +311,63 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     channel_disable.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
     channel_disable.add_argument("--name", required=True)
+
+    channel_route = channels_sub.add_parser(
+        "route",
+        help="Subscribe a channel to a slice of events (absent filters mean 'all')",
+    )
+    channel_route.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    channel_route.add_argument("--name", required=True, help="The channel to route")
+    channel_route.add_argument(
+        "--priority",
+        action="append",
+        default=None,
+        metavar="TIER",
+        choices=list(PRIORITY_TIERS),
+        help="Only events from artists in this priority tier (repeatable)",
+    )
+    channel_route.add_argument(
+        "--primary-type",
+        action="append",
+        default=None,
+        metavar="SLUG",
+        help="Only these release primary types (repeatable)",
+    )
+    channel_route.add_argument(
+        "--secondary-type",
+        action="append",
+        default=None,
+        metavar="SLUG",
+        help="Only releases carrying one of these secondary types (repeatable)",
+    )
+    channel_route.add_argument(
+        "--library",
+        action="append",
+        default=None,
+        metavar="KEY",
+        help="Only artists in these Plex libraries (repeatable). An unknown key is refused.",
+    )
+    channel_route.add_argument(
+        "--artist-key",
+        action="append",
+        default=None,
+        metavar="KEY",
+        help="Only these Plex artists (repeatable)",
+    )
+    channel_route.add_argument(
+        "--source",
+        action="append",
+        default=None,
+        metavar="SOURCE",
+        choices=list(KNOWN_SOURCES),
+        help=f"Only artists from these sources ({', '.join(KNOWN_SOURCES)}; repeatable)",
+    )
+
+    channel_unroute = channels_sub.add_parser(
+        "unroute", help="Remove a channel's route, restoring today's full fan-out"
+    )
+    channel_unroute.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    channel_unroute.add_argument("--name", required=True, help="The channel to unroute")
 
     channel_test = channels_sub.add_parser("test", help="Fire a test notification at a channel")
     channel_test.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
@@ -812,6 +874,22 @@ def _cmd_channels_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _describe_stored_route(storage: Storage, name: str) -> str:
+    """One channel's route for the listing, or a plain account of why it is not.
+
+    An unreadable route is shown as unreadable rather than raised. It is also
+    described in the terms the fan-out actually acts on — everything is
+    delivered — so the listing never implies a filter is in force when none is.
+    """
+    try:
+        return describe_route(storage.get_channel_route(name))
+    except StorageError as exc:
+        return (
+            f"UNREADABLE — delivering everything to this channel. {exc} "
+            "Rewrite it with `encore channels route`."
+        )
+
+
 def _cmd_channels_list(args: argparse.Namespace) -> int:
     """List channels with their health — never their URLs."""
     try:
@@ -821,6 +899,16 @@ def _cmd_channels_list(args: argparse.Namespace) -> int:
         return 1
     try:
         channels = storage.list_channels()
+        # Rendered per channel, never raised. `channels list` is the surface an
+        # operator reads to find out what is wrong with their channels; failing
+        # the whole listing because one route stopped parsing would break the
+        # diagnostic exactly when it is needed. The fan-out makes the same
+        # choice — an unreadable route widens to everything rather than
+        # silencing the channel — so the two agree about what a broken filter
+        # means.
+        route_lines = {
+            channel.name: _describe_stored_route(storage, channel.name) for channel in channels
+        }
     finally:
         storage.close()
     if not channels:
@@ -830,6 +918,7 @@ def _cmd_channels_list(args: argparse.Namespace) -> int:
         state = "enabled" if channel.enabled else "disabled"
         cadence = f" every {channel.digest_interval_hours}h" if channel.mode == "digest" else ""
         print(f"{channel.name}  [{channel.mode}{cadence}, {state}]")
+        print(f"    route: {route_lines[channel.name]}")
         if channel.last_success_at is not None:
             print(f"    last delivered: {channel.last_success_at:%Y-%m-%d %H:%M}")
         if channel.consecutive_failures:
@@ -892,8 +981,58 @@ def _cmd_channels_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_channels_route(args: argparse.Namespace) -> int:
+    """Subscribe a channel to a slice of events (issue #65)."""
+    route = ChannelRoute(
+        priority=frozenset(args.priority) if args.priority else None,
+        primary_types=frozenset(args.primary_type) if args.primary_type else None,
+        secondary_types=frozenset(args.secondary_type) if args.secondary_type else None,
+        library_keys=frozenset(args.library) if args.library else None,
+        artist_keys=frozenset(args.artist_key) if args.artist_key else None,
+        sources=frozenset(args.source) if args.source else None,
+    )
+    if route.is_empty():
+        print(
+            "error: no filters given. A route with no filters is today's fan-out — "
+            "use `encore channels unroute` to say that deliberately.",
+            file=sys.stderr,
+        )
+        return 2
+    return _apply_route(args, route, cleared=False)
+
+
+def _cmd_channels_unroute(args: argparse.Namespace) -> int:
+    """Remove a channel's route, restoring the full fan-out (issue #65)."""
+    return _apply_route(args, ChannelRoute(), cleared=True)
+
+
+def _apply_route(args: argparse.Namespace, route: ChannelRoute, *, cleared: bool) -> int:
+    """Persist a route (or clear one) and report what the channel now takes."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage.set_channel_route(args.name, route)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    if cleared:
+        print(f"Channel {args.name!r} is unrouted: it takes every deliverable event again.")
+    else:
+        print(f"Channel {args.name!r} now takes: {describe_route(route)}")
+        print("Filters not named take everything. Feeds are unaffected — routing")
+        print("suppresses deliveries only, exactly like muting.")
+    return 0
+
+
 _CHANNEL_COMMANDS = {
     "add": _cmd_channels_add,
+    "route": _cmd_channels_route,
+    "unroute": _cmd_channels_unroute,
     "list": _cmd_channels_list,
     "remove": _cmd_channels_remove,
     "enable": _cmd_channels_enable,
