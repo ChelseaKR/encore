@@ -8,6 +8,57 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`encore matches explain` — the evidence behind any match decision, and
+  `encore matches audit` for reviewing them in bulk.** The review queue said
+  *that* a match was uncertain, never why, and a wrong auto-match (the #32
+  GUID-boost class) stayed invisible until a wrong release alert arrived.
+  `explain --artist-key KEY` now prints the hints the scorer was given, every
+  candidate with its score decomposed into five named terms — `name`,
+  `mb_prior`, `type_hint`, `country_hint`, `guid_boost` — each with the reason
+  it has that value, and one sentence naming what decided the outcome. `--json`
+  emits the same document. Nothing re-queries MusicBrainz: it is a reading of
+  what is on disk.
+
+  The terms are re-derived independently of the scorer and their sum is held
+  against `score_candidate` over every fixture, because an explanation that
+  does not add up to the number beside it is a story about a different
+  computation — and it reads as authoritative while being wrong. That
+  invariant caught a real defect while it was being written: `decide` ranks and
+  applies the ambiguity margin on the **raw** score, but what is stored is
+  `min(raw, 1.0)`, so two candidates that both cap at 1.0 are stored as a tie
+  and were not one. The first draft reported a homonym pair as "0.000 behind"
+  for a decision the matcher made on 0.004; the gap is now taken from the raw
+  score, and falls back to the stored one only with a note saying so.
+
+  What the row does not record is reported as not recorded. An artist that has
+  never been through the matcher explains as "never matched", not as an empty
+  score table. A decision written before the evidence columns existed says its
+  breakdown cannot be re-derived, and its recorded scores still stand. `reason:
+  unrecorded` is deliberately not a fifth outcome — it means the row cannot
+  say.
+
+  `encore matches audit --out audit.jsonl` writes one JSON object per decision
+  with an empty `correct` column for a human to fill in. It includes
+  auto-matches rather than only the review queue, because a wrong auto-match is
+  exactly what the sample exists to find. That file is the sample sheet the U8
+  validation spike (#45, #46) needs to turn M1's "≥90% auto-match" exit
+  criterion into a measured number.
+
+  `docs/how-matching-decides.md` explains the terms and thresholds, and every
+  figure on it is derived from `scoring.py` by a test — moving a constant
+  without updating the page fails the build.
+
+- **Match decisions now record their own evidence (schema v12).** The stored
+  row held the *output* of a match and none of the inputs: not the hints, and
+  not the scorer's own fields on each candidate (`mb_score`, `sort_name`,
+  `aliases`). A breakdown computed from what was there would not have summed to
+  the recorded score. `artist_matches` gains `hints_json` and `decision_reason`,
+  and the stored candidate list gains the three scorer inputs — still a JSON
+  list, so every existing reader is unaffected. `resolve` and `skip` re-save a
+  row without re-scoring and no longer blank the evidence the original decision
+  recorded.
+
+
 - **`encore doctor` — one offline answer to "what is wrong with this install".**
   A self-hoster whose alerts went quiet had `encore channels list`, `/readyz`,
   and logs that deliberately carry no artist names: three partial views of three

@@ -219,6 +219,23 @@ def _migration_0011_scheduler_heartbeats(connection: Connection) -> None:
     SQLModel.metadata.create_all(connection)
 
 
+def _migration_0012_match_evidence(connection: Connection) -> None:
+    """v12: add ``artist_matches.hints_json`` and ``.decision_reason``.
+
+    `encore matches explain` re-derives a decision's score breakdown from what
+    was stored. The stored candidate rows carried none of the scorer's inputs,
+    so a breakdown computed from them would not have summed to the recorded
+    score -- an explanation of a different computation. Guarded: no-op on
+    fresh, ALTER on an existing table.
+    """
+    SQLModel.metadata.create_all(connection)
+    columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(artist_matches)")}
+    if "hints_json" not in columns:
+        connection.exec_driver_sql("ALTER TABLE artist_matches ADD COLUMN hints_json TEXT")
+    if "decision_reason" not in columns:
+        connection.exec_driver_sql("ALTER TABLE artist_matches ADD COLUMN decision_reason TEXT")
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -233,6 +250,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0009_play_counts,
     _migration_0010_recommendations,
     _migration_0011_scheduler_heartbeats,
+    _migration_0012_match_evidence,
 )
 
 
@@ -409,6 +427,8 @@ class Storage:
         mbid: str | None = None,
         confidence: float | None = None,
         candidates_json: str | None = None,
+        hints_json: str | None = None,
+        decision_reason: str | None = None,
     ) -> ArtistMatch:
         """Insert or overwrite the match row for ``artist_key`` (the upsert).
 
@@ -427,11 +447,33 @@ class Storage:
             row.mbid = mbid
             row.confidence = confidence
             row.candidates_json = candidates_json
+            # Only overwrite when the caller supplied evidence. `resolve` and
+            # `skip` re-save a row without re-scoring, and must not blank the
+            # evidence the original decision recorded.
+            if hints_json is not None:
+                row.hints_json = hints_json
+            if decision_reason is not None:
+                row.decision_reason = decision_reason
             row.updated_at = utcnow()
             session.add(row)
             session.commit()
             session.refresh(row)
         return row
+
+    def list_artist_matches(self) -> list[ArtistMatch]:
+        """Every recorded match decision, oldest first.
+
+        For `encore matches audit`, which dumps the whole set as a review
+        sample. Unlike `list_review_queue` this is not filtered by status: an
+        auto-match that is wrong is exactly the case the sample exists to
+        find, and filtering it out would make the audit unable to measure the
+        thing it is for.
+        """
+        with self.session() as session:
+            rows = session.exec(select(ArtistMatch).order_by(col(ArtistMatch.created_at))).all()
+            for row in rows:
+                session.refresh(row)
+            return list(rows)
 
     def list_review_queue(self) -> list[ArtistMatch]:
         """All artists awaiting review (status ``pending``), oldest first."""

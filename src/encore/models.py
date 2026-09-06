@@ -134,6 +134,15 @@ class ArtistMatch(SQLModel, table=True):
     mbid: str | None = Field(default=None)
     confidence: float | None = Field(default=None)
     candidates_json: str | None = Field(default=None)
+    # The hints the scorer was given, and the machine-stable reason `decide`
+    # returned what it did, both recorded at match time. Without them a later
+    # `encore matches explain` would have to guess at inputs it does not have
+    # and would print a breakdown that does not add up to the stored score.
+    # `None` on a row written before this existed is reported as "unrecorded",
+    # which is a different fact from any real reason and is never rendered as
+    # one (`encore.matching.scoring.DECISION_REASONS`).
+    hints_json: str | None = Field(default=None)
+    decision_reason: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

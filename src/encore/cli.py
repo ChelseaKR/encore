@@ -39,6 +39,7 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
 # Explicit re-export ("as uvicorn"): tests monkeypatch `cli.uvicorn.run` directly
 # (see tests/test_cli.py), which needs this name to be a real, typed attribute of
@@ -62,6 +63,9 @@ from encore.doctor import render_json as doctor_render_json
 from encore.doctor import render_text as doctor_render_text
 from encore.doctor import run_checks as doctor_run_checks
 from encore.matching.engine import candidates_from_json, run_matching_pass
+from encore.matching.explain import audit_record, explain_match
+from encore.matching.explain import render_json as explain_render_json
+from encore.matching.explain import render_text as explain_render_text
 from encore.matching.mb import MusicBrainzClient
 from encore.models import CHANNEL_MODES
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
@@ -127,6 +131,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "list", help="Show artists awaiting a match decision, with ranked candidates"
     )
     matches_list.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+
+    matches_explain = matches_sub.add_parser(
+        "explain", help="Show the evidence behind one artist's match decision (offline)"
+    )
+    matches_explain.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    matches_explain.add_argument(
+        "--artist-key", required=True, help="The artist key to explain (see `matches list`)"
+    )
+    matches_explain.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the explanation as JSON."
+    )
+
+    matches_audit = matches_sub.add_parser(
+        "audit",
+        help="Dump every current decision with its evidence as JSONL, for review sampling",
+    )
+    matches_audit.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    matches_audit.add_argument(
+        "--out", required=True, metavar="FILE", help="Write one JSON object per line to FILE"
+    )
 
     matches_resolve = matches_sub.add_parser(
         "resolve", help="Confirm an artist's MusicBrainz identity (a review decision or re-match)"
@@ -520,8 +544,63 @@ def _cmd_matches_skip(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_matches_explain(args: argparse.Namespace) -> int:
+    """Print the evidence behind one artist's match decision. Never queries MB."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        row = storage.get_artist_match(args.artist_key)
+    finally:
+        storage.close()
+    if row is None:
+        # Not an empty explanation: this artist has no decision at all, which
+        # is a different fact from a decision with no candidates.
+        print(
+            f"error: no match record for artist key {args.artist_key!r}. "
+            "Run `encore matches list` to see the keys that have one.",
+            file=sys.stderr,
+        )
+        return 1
+    explanation = explain_match(row)
+    if args.as_json:
+        print(json.dumps(explain_render_json(explanation), indent=2, sort_keys=True))
+    else:
+        print(explain_render_text(explanation))
+    return 0
+
+
+def _cmd_matches_audit(args: argparse.Namespace) -> int:
+    """Write every stored decision with its evidence, one JSON object per line.
+
+    The sample sheet the U8 validation spike (issue #46) needs: each line
+    carries a `correct` field left null for a human to fill in, so precision
+    can be computed from labels rather than asserted.
+    """
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        rows = storage.list_artist_matches()
+    finally:
+        storage.close()
+    destination = Path(args.out)
+    with destination.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(audit_record(explain_match(row)), sort_keys=True) + "\n")
+    print(f"Wrote {len(rows)} decision(s) to {destination}.")
+    print("Fill in each line's `correct` field to compute field precision (issue #46).")
+    return 0
+
+
 _MATCHES_COMMANDS = {
     "list": _cmd_matches_list,
+    "explain": _cmd_matches_explain,
+    "audit": _cmd_matches_audit,
     "resolve": _cmd_matches_resolve,
     "skip": _cmd_matches_skip,
 }
