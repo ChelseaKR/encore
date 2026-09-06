@@ -33,6 +33,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import quote
 
+from encore.endpoints import EndpointConfigError, resolve_endpoints
 from encore.i18n import _, _n
 from encore.models import EventView
 
@@ -49,6 +50,8 @@ __all__ = [
     "render_test",
 ]
 
+# The PUBLIC endpoint, and the default; `ENCORE_COVER_ART_BASE_URL` points at
+# a local proxy instead (issue #63, `encore.endpoints`).
 COVER_ART_BASE_URL = "https://coverartarchive.org"
 PLEX_APP_BASE_URL = "https://app.plex.tv/desktop"
 
@@ -67,9 +70,22 @@ class RenderedNotification:
     body: str
 
 
-def cover_art_url(release_group_mbid: str) -> str:
-    """Build the Cover Art Archive front-cover URL for a release-group MBID."""
-    return f"{COVER_ART_BASE_URL}/release-group/{quote(release_group_mbid)}/front"
+def cover_art_url(release_group_mbid: str, *, base_url: str | None = None) -> str:
+    """Build the cover-art front-cover URL for a release-group MBID.
+
+    Rendering must not be the place a bad endpoint variable surfaces: a
+    notification the user is waiting for should not fail to render because
+    `ENCORE_COVER_ART_BASE_URL` is malformed. The configuration error is
+    raised where it matters — at client construction and at `/readyz` — and
+    here the public archive is used, which is where the URL pointed before
+    anyone configured anything.
+    """
+    if base_url is None:
+        try:
+            base_url = resolve_endpoints().cover_art_base_url
+        except EndpointConfigError:
+            base_url = COVER_ART_BASE_URL
+    return f"{base_url.rstrip('/')}/release-group/{quote(release_group_mbid)}/front"
 
 
 def plex_artist_url(machine_identifier: str | None, plex_rating_key: str | None) -> str | None:

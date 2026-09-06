@@ -40,6 +40,10 @@ def test_readyz_ok_with_open_storage(tmp_path: Path, monkeypatch: pytest.MonkeyP
         "status": "ok",
         "checks": {
             "db": "ok",
+            # A default install reads the public MetaBrainz endpoint, which is
+            # deliberately not probed at boot — reported as `not_applicable`
+            # rather than as a check that passed (issue #63).
+            "metadata_endpoint": "not_applicable",
             "sync_scheduler": "idle",
             "match_scheduler": "ok",
             "watch_scheduler": "ok",
