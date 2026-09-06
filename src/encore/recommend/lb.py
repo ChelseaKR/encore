@@ -34,6 +34,7 @@ from dataclasses import dataclass
 import httpx
 
 from encore import __version__
+from encore.endpoints import resolve_endpoints
 from encore.matching.mb import RateLimiter
 
 __all__ = [
@@ -47,6 +48,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+# The PUBLIC endpoint, and the default; `ENCORE_LB_BASE_URL` points at a
+# labs mirror instead (issue #63, `encore.endpoints`).
 LB_BASE_URL = "https://labs.api.listenbrainz.org"
 # The default session-based similarity algorithm the labs UI exposes; the
 # endpoint requires an explicit algorithm and answers 400 without one.
@@ -112,13 +115,14 @@ class ListenBrainzClient:
 
     def __init__(
         self,
-        base_url: str = LB_BASE_URL,
+        base_url: str | None = None,
         algorithm: str = DEFAULT_ALGORITHM,
         rate_limiter: RateLimiter | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        """Create the client; the default rate limiter is the process-global one."""
-        self._base_url = base_url.rstrip("/")
+        """Create the client against the configured endpoint; default limiter is global."""
+        resolved = base_url if base_url is not None else resolve_endpoints().lb_base_url
+        self._base_url = resolved.rstrip("/")
         self._algorithm = algorithm
         self._rate_limiter = rate_limiter if rate_limiter is not None else LB_RATE_LIMITER
         self._sleep = sleep

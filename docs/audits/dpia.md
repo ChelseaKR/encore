@@ -69,6 +69,29 @@ marker tests extend to this layer: neither the notification body nor the channel
 URL ever reaches a log line, and a third-party plugin's exception message is
 reduced to its type before it can echo a URL. The full regeneration against the
 real schema remains due at M1 exit.
+**Mirror update (2026-09-06, issue #63):** the three MetaBrainz-family base
+URLs are now operator-configurable (`ENCORE_MB_BASE_URL`, `ENCORE_LB_BASE_URL`,
+`ENCORE_COVER_ART_BASE_URL`; see `docs/self-hosted-mirror.md` and
+`src/encore/endpoints.py`). This **removes** an outbound flow rather than
+adding one, and it is the only configuration in encore that changes who sees
+the household's taste data. With `ENCORE_MB_BASE_URL` pointed at a self-hosted
+MusicBrainz mirror, the artist names in search queries and the artist MBIDs in
+browse queries stop leaving the operator's network: the flow disclosed in the
+F2 and F3 updates above terminates at the operator's own host, and MetaBrainz
+sees nothing. Three qualifications, because a privacy claim that is true only
+sometimes has to say when. First, **encore never falls back to the public host**
+— a mirror that is malformed, unreachable, or not speaking the MusicBrainz web
+service makes `/readyz` unready and stops MB-dependent polling, rather than
+quietly restoring the flow this configuration was chosen to end; that refusal
+is the mechanism the claim rests on. Second, **cover art is unaffected unless
+separately proxied**: it travels as a URL, so it is the *recipient's* client
+that contacts `coverartarchive.org` (ADR-0012), and `ENCORE_COVER_ART_BASE_URL`
+changes which host that is, not whether one is contacted. Third, a mirror does
+not change the notification egress in (3) above at all: choosing a Discord
+webhook still means choosing Discord as a reader of that feed. No new data
+class; no new retention; the risk table below is unchanged and its rows are now
+conditional on this setting rather than unconditional.
+
 **Recheck trigger:** re-verify and expand this document whenever any of the
 following lands, and in any case no later than M1 (`docs/ROADMAP.md` §8):
 F11 (ListenBrainz account linking), F12 (Jellyfin/Navidrome adapter), F14

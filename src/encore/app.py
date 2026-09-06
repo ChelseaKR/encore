@@ -25,6 +25,7 @@ process being up, so it can't false-negative during a slow dependency check.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -36,6 +37,13 @@ from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from encore import __version__
+from encore.endpoints import (
+    PROBE_INVALID,
+    EndpointConfigError,
+    EndpointProbe,
+    probe_metadata_endpoint,
+    resolve_endpoints,
+)
 from encore.feeds import ICAL_EVENT_LIMIT, RSS_EVENT_LIMIT, render_ical, render_rss
 from encore.metrics import METRICS_REGISTRY, RedMetricsMiddleware, render_prometheus
 from encore.scheduler import (
@@ -47,6 +55,8 @@ from encore.scheduler import (
 )
 from encore.secretstore import SecretDecryptionError
 from encore.storage import Storage, StorageError
+
+logger = logging.getLogger(__name__)
 
 # readyz check name → app.state attribute holding the (optional) scheduler.
 _SCHEDULER_CHECKS = (
@@ -66,6 +76,56 @@ FEED_PATH_PREFIX = "/feeds/"
 # it off disk in the reader, where the next person at that machine would find
 # the feed without ever holding the token.
 FEED_CACHE_CONTROL = "private, no-store"
+
+
+def _start_metadata_endpoint(app: FastAPI) -> EndpointProbe:
+    """Resolve and validate the metadata endpoint before anything is allowed to poll it.
+
+    A mirror that is up, serving HTTPS and answering an nginx welcome page
+    looks healthy to every check that only asks whether the host resolves —
+    and encore would poll it forever, record nothing, and report a green
+    scheduler the whole time. So the configured endpoint is asked for a
+    MusicBrainz resource once, at boot, and MB-dependent polling starts only
+    if it answers like MusicBrainz.
+
+    This is the one exception to "no network traffic happens at boot", and it
+    is narrow on purpose: the PUBLIC endpoint is never probed (its address is
+    a constant here, and a request to donation-funded infrastructure on every
+    boot is not free), so a default install still opens no socket at startup.
+    A boot-time request happens only for an endpoint the operator configured,
+    against the operator's own network.
+
+    A broken configuration does not stop the boot — the server has to come up
+    so the operator can read `/readyz` and find out why — but it does stop the
+    polling, and it never resolves itself by using the public host instead.
+    """
+    try:
+        endpoints = resolve_endpoints()
+    except EndpointConfigError as exc:
+        app.state.endpoints = None
+        return EndpointProbe(PROBE_INVALID, str(exc))
+    app.state.endpoints = endpoints
+    for note in endpoints.notes:
+        logger.info("endpoints: %s", note)
+    probe = probe_metadata_endpoint(endpoints)
+    logger.info("endpoints: %s — %s (%s)", endpoints.describe(), probe.status, probe.detail)
+    return probe
+
+
+def _metadata_endpoint_statuses(app: FastAPI) -> tuple[dict[str, str], bool]:
+    """Return the metadata-endpoint readyz checks and whether they block readiness.
+
+    A probe that was never recorded reads `unknown` and blocks: "we have no
+    result" and "the endpoint is fine" are different facts, and an instance
+    that cannot say which one it is in is not ready.
+    """
+    probe: EndpointProbe | None = getattr(app.state, "metadata_probe", None)
+    if probe is None:
+        return {"metadata_endpoint": "unknown"}, True
+    checks = {"metadata_endpoint": probe.status}
+    if probe.blocks_polling:
+        checks["metadata_endpoint_detail"] = probe.detail
+    return checks, probe.blocks_polling
 
 
 def _scheduler_statuses(app: FastAPI) -> tuple[dict[str, str], bool]:
@@ -186,11 +246,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.storage = Storage(data_dir)
+        app.state.metadata_probe = _start_metadata_endpoint(app)
         app.state.scheduler = build_sync_scheduler(app.state.storage)
-        app.state.match_scheduler = build_match_scheduler(app.state.storage)
-        app.state.watch_scheduler = build_watch_scheduler(app.state.storage)
+        # Everything that reads MusicBrainz or ListenBrainz stays down while
+        # the metadata endpoint is unusable. "Nothing polls" is the promise;
+        # a scheduler that runs against a broken endpoint would instead spend
+        # the outage writing failure counters and looking busy.
+        blocked = app.state.metadata_probe.blocks_polling
+        app.state.match_scheduler = None if blocked else build_match_scheduler(app.state.storage)
+        app.state.watch_scheduler = None if blocked else build_watch_scheduler(app.state.storage)
+        app.state.rec_scheduler = None if blocked else build_rec_scheduler(app.state.storage)
+        # Notification delivery reads only what is already recorded, so it is
+        # deliberately NOT gated: a metadata outage must not also silence the
+        # alerts for releases encore already knows about.
         app.state.notify_scheduler = build_notify_scheduler(app.state.storage)
-        app.state.rec_scheduler = build_rec_scheduler(app.state.storage)
         try:
             yield
         finally:
@@ -269,10 +338,16 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
                 status_code=503,
                 content={"status": "unready", "checks": {"db": "unavailable"}},
             )
+        # Metadata-endpoint check (issue #63). A configured endpoint that is
+        # unreachable or is not a MusicBrainz web service makes the instance
+        # unready and names the reason: the schedulers above it are `idle`
+        # rather than `stopped` in that state, and an idle scheduler is a
+        # documented state that must not be read as this failure.
+        endpoint_checks, endpoint_unready = _metadata_endpoint_statuses(app)
         # Scheduler check (M2-F3, OBS-20) — see _scheduler_statuses.
         scheduler_checks, unready = _scheduler_statuses(app)
-        checks: dict[str, str] = {"db": "ok", **scheduler_checks}
-        if unready:
+        checks: dict[str, str] = {"db": "ok", **endpoint_checks, **scheduler_checks}
+        if unready or endpoint_unready:
             return JSONResponse(status_code=503, content={"status": "unready", "checks": checks})
         return JSONResponse(status_code=200, content={"status": "ok", "checks": checks})
 

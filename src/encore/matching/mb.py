@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from encore import __version__
+from encore.endpoints import EndpointConfigError, resolve_endpoints
 
 __all__ = [
     "MB_BASE_URL",
@@ -34,10 +35,14 @@ __all__ = [
     "MusicBrainzError",
     "RateLimiter",
     "ReleaseGroupInfo",
+    "mb_rate_limiter",
 ]
 
 logger = logging.getLogger(__name__)
 
+# The PUBLIC endpoint, and the default. An operator with a self-hosted mirror
+# points `ENCORE_MB_BASE_URL` at it instead (issue #63, `encore.endpoints`);
+# this constant stays as the address encore falls back to *nowhere else from*.
 MB_BASE_URL = "https://musicbrainz.org/ws/2"
 # Descriptive, contactable User-Agent — the MetaBrainz API citizenship
 # requirement (roadmap §5, risk R8).
@@ -92,6 +97,26 @@ class RateLimiter:
 
 
 MB_RATE_LIMITER = RateLimiter()
+
+
+def mb_rate_limiter() -> RateLimiter:
+    """Return the process-wide MB budget, paced for the configured endpoint.
+
+    One limiter, because there is one MusicBrainz endpoint per process. Its
+    interval is re-read from the environment on every call rather than frozen
+    at import, so a test (and an operator restarting the process) gets the
+    pacing the configuration actually asks for.
+
+    A configuration error yields the PUBLIC pace, never a faster one: the
+    caller that is about to construct a client will raise on the same broken
+    configuration a moment later, and until it does, the safe interval is the
+    polite one.
+    """
+    try:
+        MB_RATE_LIMITER.min_interval = resolve_endpoints().mb_min_interval
+    except EndpointConfigError:
+        MB_RATE_LIMITER.min_interval = 1.0
+    return MB_RATE_LIMITER
 
 
 @dataclass(frozen=True)
@@ -199,13 +224,20 @@ class MusicBrainzClient:
 
     def __init__(
         self,
-        base_url: str = MB_BASE_URL,
+        base_url: str | None = None,
         rate_limiter: RateLimiter | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        """Create the client; the default rate limiter is the process-global one."""
-        self._base_url = base_url.rstrip("/")
-        self._rate_limiter = rate_limiter if rate_limiter is not None else MB_RATE_LIMITER
+        """Create the client against the configured endpoint (mirror or public).
+
+        `base_url=None` resolves `ENCORE_MB_BASE_URL`, which RAISES on a
+        malformed or credential-bearing value rather than quietly using the
+        public host — an operator who moved their library's artist names onto
+        their own network must not have them moved back off it by a typo.
+        """
+        endpoints = resolve_endpoints()
+        self._base_url = (base_url if base_url is not None else endpoints.mb_base_url).rstrip("/")
+        self._rate_limiter = rate_limiter if rate_limiter is not None else mb_rate_limiter()
         self._sleep = sleep
         # httpx/httpcore log full request URLs at INFO/DEBUG — and MusicBrainz
         # search URLs embed artist names, which are taste data (no-outing

@@ -40,7 +40,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from encore.endpoints import EndpointConfigError, Endpoints, resolve_endpoints
 from encore.models import SCHEDULER_JOB_IDS
 from encore.secretstore import SecretDecryptionError, SecretKeyError
 from encore.storage import (
@@ -82,11 +84,21 @@ CHANNEL_FAILURE_WARN = 3
 # Hosts probed only under `--check-upstream`, one TCP connect each. Names, not
 # URLs: this opens a socket, it does not make a request, so nothing here can
 # carry a query or a token.
+#
+# These are the PUBLIC defaults, and they are no longer the list that is
+# probed: `_upstream_targets` derives the hosts from the endpoints this
+# install is actually configured for (issue #63). Probing `musicbrainz.org`
+# on a mirrored install answered a question nobody asked — "is MetaBrainz
+# up?" — and reported it under the name of the check for "can encore reach
+# its metadata endpoint?", which is exactly the shape of finding this
+# repository keeps having to delete.
 CHECK_UPSTREAM_HOSTS = (
     ("musicbrainz", "musicbrainz.org", 443),
     ("listenbrainz_labs", "labs.api.listenbrainz.org", 443),
     ("cover_art_archive", "coverartarchive.org", 443),
 )
+
+_DEFAULT_PORT_FOR_SCHEME = {"https": 443, "http": 80}
 
 _UPSTREAM_TIMEOUT_SECONDS = 5.0
 
@@ -416,10 +428,56 @@ def _check_scheduler_heartbeats(storage: Storage, *, now: datetime) -> list[Chec
     return results
 
 
-def _check_upstream() -> list[CheckResult]:
+def _upstream_targets(endpoints: Endpoints | None) -> tuple[tuple[str, str, int], ...]:
+    """Return the hosts THIS install talks to, so a mirror is probed and not MetaBrainz."""
+    if endpoints is None:
+        return CHECK_UPSTREAM_HOSTS
+    pairs = (
+        ("musicbrainz", endpoints.mb_base_url),
+        ("listenbrainz_labs", endpoints.lb_base_url),
+        ("cover_art_archive", endpoints.cover_art_base_url),
+    )
+    targets: list[tuple[str, str, int]] = []
+    for name, url in pairs:
+        parts = urlsplit(url)
+        host = parts.hostname
+        if not host:  # pragma: no cover - resolve_endpoints rejects a hostless URL
+            continue
+        targets.append((name, host, parts.port or _DEFAULT_PORT_FOR_SCHEME.get(parts.scheme, 443)))
+    return tuple(targets)
+
+
+def _check_metadata_endpoint(endpoints: Endpoints | None, error: str) -> CheckResult:
+    """Name the endpoint encore is configured to read, offline.
+
+    Which endpoint is in use is a configuration fact, knowable with no socket,
+    and it is the first thing to establish when a mirrored install goes quiet.
+    Whether that endpoint *answers* is a different question: the server probes
+    it at startup and reports it at `/readyz`; here it is only ever reachable
+    under `--check-upstream`, and then as its own check.
+
+    An operator value that is set but NOT in effect is a `warn`, not a pass.
+    Silently discarding configuration is how someone spends an afternoon
+    wondering why their mirror is still being polled once a second.
+    """
+    if endpoints is None:
+        return CheckResult(
+            "metadata_endpoint",
+            "fail",
+            error,
+            "Fix the endpoint variable, or unset it; encore will not fall back to the "
+            "public host on its own.",
+        )
+    ignored = [note for note in endpoints.notes if "IGNORED" in note]
+    if ignored:
+        return CheckResult("metadata_endpoint", "warn", endpoints.describe(), ignored[0])
+    return CheckResult("metadata_endpoint", "pass", endpoints.describe())
+
+
+def _check_upstream(endpoints: Endpoints | None = None) -> list[CheckResult]:
     """One TCP connect per upstream. Only ever called with --check-upstream."""
     results: list[CheckResult] = []
-    for name, host, port in CHECK_UPSTREAM_HOSTS:
+    for name, host, port in _upstream_targets(endpoints):
         try:
             with socket.create_connection((host, port), timeout=_UPSTREAM_TIMEOUT_SECONDS):
                 results.append(CheckResult(f"upstream:{name}", "pass", f"{host}:{port} reachable"))
@@ -466,6 +524,12 @@ def run_checks(
     would destroy every secret already encrypted under the real one.
     """
     moment = now or datetime.now(UTC)
+    endpoints: Endpoints | None
+    endpoint_error = ""
+    try:
+        endpoints = resolve_endpoints()
+    except EndpointConfigError as exc:
+        endpoints, endpoint_error = None, str(exc)
     resolved = resolve_data_dir(data_dir)
     results = [_check_data_dir(resolved)]
 
@@ -494,9 +558,10 @@ def run_checks(
             finally:
                 storage.close()
 
+    results.append(_check_metadata_endpoint(endpoints, endpoint_error))
     results.append(_rate_limit_note())
     if check_upstream:
-        results.extend(_check_upstream())
+        results.extend(_check_upstream(endpoints))
     return results
 
 

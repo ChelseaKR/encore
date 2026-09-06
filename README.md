@@ -99,6 +99,8 @@ encore/
 │   │                          #   secret-free, cross-version document (#54)
 │   ├── doctor.py              # `encore doctor`: the offline diagnostic checklist,
 │   │                          #   exit 0/1/2, no socket without --check-upstream
+│   ├── endpoints.py           # which MetaBrainz endpoints this install reads and how
+│   │                          #   fast: mirror support, the pinned public rate (#63)
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
 │   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
 │   ├── i18n.py                # the gettext seam every user-facing string routes through
