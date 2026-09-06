@@ -8,6 +8,36 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`encore channels route` — each channel subscribes to a slice of events.**
+  Fan-out was all-or-nothing: every enabled channel got every deliverable
+  event, so a loud phone channel and a quiet email digest could not coexist
+  without muting artists globally. F10 gave artists priority tiers precisely so
+  heavy-rotation favourites could break through; this is the channel-side half
+  of that design. A route may name `priority`, `primary_types`,
+  `secondary_types`, `library_keys`, `artist_keys` and `sources`; the rule is
+  evaluated after F10 has decided an event is deliverable and before fan-out,
+  so a routed-away event is never materialised for that channel. Feeds are
+  unaffected — routing, like muting, suppresses deliveries only (ADR-0012).
+
+  **An absent key means "all", so an unrouted channel behaves exactly as it did
+  before this existed.** `ChannelRoute()` is the identity predicate and a
+  migrated database gets `route_json = NULL`, which is today's fan-out. A test
+  walks every route key and fails if one is parsed but not honoured — a filter
+  the schema accepts and the predicate ignores is a rule that lies.
+
+  **A rule that could never match is refused when it is written.** An unknown
+  library key, release type, priority tier or source is rejected by name at
+  `channels route` time rather than delivering nothing forever. That includes
+  `imported`: it is #55's watchlist source and nothing writes it yet, so
+  accepting it would wire a channel to a source that can never match. An
+  explicitly empty list is refused too — `[]` reads as "none of them", and
+  `encore channels disable` says that reversibly.
+
+  A stored route that has become unreadable widens to "everything" with a
+  warning rather than silencing the channel: a filter is a narrowing rule, and
+  turning one into an outage because it stopped parsing is the wrong direction
+  to fail. Schema v13. (#65)
+
 - **`encore export` and `encore import` — watch state as a portable,
   secret-free document.** `encore backup` (#53) is a byte-level copy of one
   install, restorable only by the same build. This is the other half: a

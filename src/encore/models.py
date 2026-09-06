@@ -241,6 +241,11 @@ class NotificationChannel(SQLModel, table=True):
     last_failure_at: datetime | None = Field(default=None)
     last_error: str | None = Field(default=None)
     consecutive_failures: int = Field(default=0)
+    # F10's channel-side half (issue #65): which slice of events this channel
+    # subscribes to. NULL means "everything", which is the pre-routing
+    # fan-out, so an unrouted channel behaves exactly as it always did.
+    # Parsed and validated by `encore.channelroute`, never read raw.
+    route_json: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

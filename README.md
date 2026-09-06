@@ -114,6 +114,8 @@ encore/
 │   │                          #   upcoming dates, behind a rotatable token URL
 │   ├── artistsettings.py      # F10 watch policy every consumer reads: release
 │   │                          #   types, muting, per-artist and global priority
+│   ├── channelroute.py        # F10's channel-side half: which slice of events
+│   │                          #   each channel subscribes to (#65)
 │   └── recommend/             # F7/F8 recommendations: ListenBrainz labs
 │                              #   similar-artists with provenance, promote/dismiss
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
