@@ -50,6 +50,7 @@ from encore.models import (
     Recommendation,
     ReleaseEvent,
     ReleaseGroup,
+    SchedulerHeartbeat,
     UpcomingReleaseView,
     utcnow,
 )
@@ -207,6 +208,17 @@ def _migration_0010_recommendations(connection: Connection) -> None:
     SQLModel.metadata.create_all(connection)
 
 
+def _migration_0011_scheduler_heartbeats(connection: Connection) -> None:
+    """v11: create ``scheduler_heartbeats`` (guarded — no-op on fresh).
+
+    `encore doctor` reports when each background job last ran. Nothing
+    persisted that: `/readyz` reads the scheduler objects in its own process,
+    which an offline CLI has no access to and which say nothing about whether
+    a job ever did any work.
+    """
+    SQLModel.metadata.create_all(connection)
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -220,6 +232,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0008_watch_settings,
     _migration_0009_play_counts,
     _migration_0010_recommendations,
+    _migration_0011_scheduler_heartbeats,
 )
 
 
@@ -926,6 +939,79 @@ class Storage:
         return settled
 
     # -- watch settings (F10) ---------------------------------------------------
+
+    def record_scheduler_run(self, job_id: str, *, ok: bool, error: str | None = None) -> None:
+        """Upsert one background job's heartbeat. Never raises into the job.
+
+        Called from `encore.scheduler`'s run functions, which are APScheduler
+        callbacks: an exception escaping here would kill the job rather than
+        record that it failed, so a heartbeat that cannot be written is
+        swallowed and logged upstream. The row is the only offline evidence
+        that a job ran at all, so writing it is deliberately the last thing a
+        run does and never a precondition for the work.
+        """
+        now = utcnow()
+        with self.session() as session:
+            row = session.exec(
+                select(SchedulerHeartbeat).where(SchedulerHeartbeat.job_id == job_id)
+            ).first()
+            if row is None:
+                row = SchedulerHeartbeat(job_id=job_id)
+                session.add(row)
+            row.last_started_at = now
+            row.updated_at = now
+            if ok:
+                row.last_success_at = now
+                row.last_error = None
+                row.consecutive_failures = 0
+            else:
+                row.last_failure_at = now
+                row.last_error = error
+                row.consecutive_failures = row.consecutive_failures + 1
+            session.commit()
+
+    def list_scheduler_heartbeats(self) -> list[SchedulerHeartbeat]:
+        """Return every recorded heartbeat, in job-id order.
+
+        A job that has never run has no row at all: the caller reports that
+        absence, it does not invent a zero-aged one.
+        """
+        with self.session() as session:
+            rows = session.exec(
+                select(SchedulerHeartbeat).order_by(SchedulerHeartbeat.job_id)
+            ).all()
+            for row in rows:
+                session.refresh(row)
+            return list(rows)
+
+    def schema_version(self) -> int:
+        """Return the schema version the database file is actually at."""
+        with self.engine.connect() as connection:
+            return int(connection.exec_driver_sql("PRAGMA user_version").scalar_one())
+
+    def integrity_check(self) -> str:
+        """Run SQLite's own ``PRAGMA integrity_check``; ``"ok"`` when healthy."""
+        with self.engine.connect() as connection:
+            return str(connection.exec_driver_sql("PRAGMA integrity_check").scalar_one())
+
+    def journal_mode(self) -> str:
+        """Return the file's persistent journal mode (expected: ``wal``)."""
+        with self.engine.connect() as connection:
+            return str(connection.exec_driver_sql("PRAGMA journal_mode").scalar_one())
+
+    def delivery_counts(self) -> dict[str, int]:
+        """Count deliveries by status.
+
+        A status with no rows is reported as 0, and that 0 is a real count:
+        the query ran and found none.
+        """
+        counts = dict.fromkeys(DELIVERY_STATUSES, 0)
+        with self.session() as session:
+            for status in DELIVERY_STATUSES:
+                counts[status] = len(
+                    session.exec(select(Delivery).where(Delivery.status == status)).all()
+                )
+        return counts
 
     def get_watch_defaults(self) -> SettingsOverride:
         """Return the global watch policy layer (type allowlists only, by validation).

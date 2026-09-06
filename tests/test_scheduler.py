@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -384,3 +385,91 @@ def test_scheduled_recommend_builds_and_closes_its_own_lb_client(
     assert refreshes == [fake_client]
     assert fake_client.closed
     storage.close()
+
+
+class TestTheHeartbeat:
+    """`_heartbeat` — the only offline evidence that a background job ran.
+
+    `/readyz` reads the scheduler objects in its own process, so nothing could
+    tell a job that had been failing nightly from one that was never started.
+    These hold the three things that makes true: a run that worked records a
+    success, a run that failed records the failure and still raises, and a
+    heartbeat that cannot be written never takes the job down with it.
+    """
+
+    def test_a_successful_run_records_a_success(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "data")
+        with scheduler._heartbeat(storage, "plex-sync"):
+            pass
+        row = next(r for r in storage.list_scheduler_heartbeats() if r.job_id == "plex-sync")
+        assert row.last_success_at is not None
+        assert row.consecutive_failures == 0
+        assert row.last_error is None
+        storage.close()
+
+    def test_a_raising_run_is_recorded_and_the_exception_still_escapes(
+        self, tmp_path: Path
+    ) -> None:
+        # Re-raised unchanged: APScheduler must see exactly what it saw
+        # before this wrapper existed.
+        storage = Storage(tmp_path / "data")
+        with (
+            pytest.raises(RuntimeError, match="upstream fell over"),
+            scheduler._heartbeat(storage, "mb-watch"),
+        ):
+            raise RuntimeError("upstream fell over")
+
+        row = next(r for r in storage.list_scheduler_heartbeats() if r.job_id == "mb-watch")
+        assert row.consecutive_failures == 1
+        assert row.last_error == "RuntimeError: upstream fell over"
+        assert row.last_success_at is None
+        storage.close()
+
+    def test_a_body_that_marks_itself_failed_is_not_recorded_as_a_success(
+        self, tmp_path: Path
+    ) -> None:
+        # `_run_scheduled_sync` catches its own `SyncError` and logs it, so no
+        # exception reaches the wrapper. Without this, "caught and logged"
+        # would be recorded as a healthy run -- a failure published as a
+        # measurement, which is the defect class this repository names as its
+        # own worst case.
+        storage = Storage(tmp_path / "data")
+        with scheduler._heartbeat(storage, "plex-sync") as run:
+            run["ok"] = False
+            run["error"] = "SyncError: Plex refused the connection"
+
+        row = next(r for r in storage.list_scheduler_heartbeats() if r.job_id == "plex-sync")
+        assert row.consecutive_failures == 1
+        assert row.last_error == "SyncError: Plex refused the connection"
+        storage.close()
+
+    def test_a_heartbeat_that_cannot_be_written_does_not_kill_the_job(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The recording is diagnostics. A job must not die because its
+        # diagnostics did.
+        storage = Storage(tmp_path / "data")
+
+        def _explode(*args: object, **kwargs: object) -> None:
+            raise OSError("disk went away")
+
+        monkeypatch.setattr(storage, "record_scheduler_run", _explode)
+        with caplog.at_level(logging.ERROR), scheduler._heartbeat(storage, "mb-match"):
+            pass  # the job's own work succeeded
+
+        assert "could not record the mb-match heartbeat" in caplog.text
+        storage.close()
+
+    def test_a_success_after_failures_clears_the_streak(self, tmp_path: Path) -> None:
+        storage = Storage(tmp_path / "data")
+        for _ in range(3):
+            with contextlib.suppress(RuntimeError), scheduler._heartbeat(storage, "lb-recommend"):
+                raise RuntimeError("flaky")
+        with scheduler._heartbeat(storage, "lb-recommend"):
+            pass
+
+        row = next(r for r in storage.list_scheduler_heartbeats() if r.job_id == "lb-recommend")
+        assert row.consecutive_failures == 0
+        assert row.last_error is None
+        assert row.last_failure_at is not None, "the failure history is still recorded"
+        storage.close()

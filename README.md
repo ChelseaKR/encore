@@ -93,6 +93,8 @@ encore/
 │   ├── models.py              # SQLModel tables — settings, artists, matches, releases,
 │   │                          #   events, notification channels, delivery queue
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
+│   ├── doctor.py              # `encore doctor`: the offline diagnostic checklist,
+│   │                          #   exit 0/1/2, no socket without --check-upstream
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
 │   ├── sync.py                # F1 library sync: inventory, upsert, tombstone
 │   ├── i18n.py                # the gettext seam every user-facing string routes through
@@ -118,6 +120,36 @@ encore/
 
 Full technical plan (data model, the sync/watch and recommend pipelines, the
 MusicBrainz rate budget) lives in the ADRs under `docs/adr/`.
+
+## Diagnosing a quiet install
+
+`encore doctor` is the single answer to "why did my alerts stop". It runs a
+fixed checklist over the data directory, the key file's permissions, the
+database's own `integrity_check`, and the state each feature already persists,
+and prints one line per check with a verdict and a next step.
+
+```
+encore doctor                 # offline: opens no socket at all
+encore doctor --check-upstream  # adds one reachability probe per upstream
+encore doctor --json          # shape pinned by docs/doctor-schema.json
+```
+
+It exits `0` when everything passed, `1` on a warning, and `2` on a failure,
+so it works as a container healthcheck. Two things it deliberately does not do:
+
+- **It never prints a secret.** The Plex token, an Apprise URL and the feed
+  token are checked for presence and decryptability; their values are never
+  rendered. A channel's stored error text is scrubbed of anything URL-shaped
+  first, because an Apprise URL is itself a credential and arrives in that
+  text without anyone choosing to log it.
+- **It never reports a check it could not run as a pass.** The MusicBrainz
+  rate-limit counter lives in the running server's process, so a separate CLI
+  cannot read it; that is printed as `SKIPPED` with the reason rather than as
+  a reassuring zero, and it does not affect the exit code.
+
+A job that has never run reads `never`, which is not the same finding as a job
+that ran and found nothing — the schedulers record a heartbeat so that
+difference survives a restart.
 
 ## Back up and restore `/data`
 
