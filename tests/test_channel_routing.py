@@ -443,3 +443,42 @@ def test_cli_route_prints_no_channel_url(
     cli.main(["channels", "list", "--data-dir", str(tmp_path)])
     captured = capsys.readouterr()
     assert "sentinel-pass" not in captured.out + captured.err
+
+
+def test_channels_list_still_lists_when_one_route_is_unreadable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The diagnostic must not fail on the very fault it exists to show.
+
+    `channels list` is where an operator looks to find out what is wrong with
+    their channels. Aborting the whole listing because one stored route stopped
+    parsing would break it exactly when it is needed — and it would hide the
+    healthy channels too. The unreadable route is named, and described in the
+    terms the fan-out actually acts on, so the listing never implies a filter
+    is in force when none is.
+    """
+    from sqlmodel import select
+
+    from encore.models import NotificationChannel
+
+    storage = Storage(tmp_path)
+    storage.add_channel(name="broken", url=SENTINEL_URL, mode="instant")
+    storage.add_channel(name="healthy", url=SENTINEL_URL + "/2", mode="instant")
+    storage.set_channel_route("healthy", ChannelRoute(priority=frozenset({"instant"})))
+    with storage.session() as session:
+        channel = session.exec(
+            select(NotificationChannel).where(NotificationChannel.name == "broken")
+        ).one()
+        channel.route_json = "{not json"
+        session.add(channel)
+        session.commit()
+    storage.close()
+
+    assert cli.main(["channels", "list", "--data-dir", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "broken" in out
+    assert "UNREADABLE" in out
+    assert "delivering everything" in out
+    # The healthy channel is still listed with its real route.
+    assert "healthy" in out
+    assert "route: priority=instant" in out

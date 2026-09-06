@@ -874,6 +874,22 @@ def _cmd_channels_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _describe_stored_route(storage: Storage, name: str) -> str:
+    """One channel's route for the listing, or a plain account of why it is not.
+
+    An unreadable route is shown as unreadable rather than raised. It is also
+    described in the terms the fan-out actually acts on — everything is
+    delivered — so the listing never implies a filter is in force when none is.
+    """
+    try:
+        return describe_route(storage.get_channel_route(name))
+    except StorageError as exc:
+        return (
+            f"UNREADABLE — delivering everything to this channel. {exc} "
+            "Rewrite it with `encore channels route`."
+        )
+
+
 def _cmd_channels_list(args: argparse.Namespace) -> int:
     """List channels with their health — never their URLs."""
     try:
@@ -883,13 +899,16 @@ def _cmd_channels_list(args: argparse.Namespace) -> int:
         return 1
     try:
         channels = storage.list_channels()
-        storage_routes = {
-            channel.name: storage.get_channel_route(channel.name) for channel in channels
+        # Rendered per channel, never raised. `channels list` is the surface an
+        # operator reads to find out what is wrong with their channels; failing
+        # the whole listing because one route stopped parsing would break the
+        # diagnostic exactly when it is needed. The fan-out makes the same
+        # choice — an unreadable route widens to everything rather than
+        # silencing the channel — so the two agree about what a broken filter
+        # means.
+        route_lines = {
+            channel.name: _describe_stored_route(storage, channel.name) for channel in channels
         }
-    except StorageError as exc:
-        storage.close()
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
     finally:
         storage.close()
     if not channels:
@@ -899,7 +918,7 @@ def _cmd_channels_list(args: argparse.Namespace) -> int:
         state = "enabled" if channel.enabled else "disabled"
         cadence = f" every {channel.digest_interval_hours}h" if channel.mode == "digest" else ""
         print(f"{channel.name}  [{channel.mode}{cadence}, {state}]")
-        print(f"    route: {describe_route(storage_routes[channel.name])}")
+        print(f"    route: {route_lines[channel.name]}")
         if channel.last_success_at is not None:
             print(f"    last delivered: {channel.last_success_at:%Y-%m-%d %H:%M}")
         if channel.consecutive_failures:
