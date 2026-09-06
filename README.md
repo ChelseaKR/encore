@@ -95,6 +95,8 @@ encore/
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
 │   ├── backup.py              # `encore backup`/`restore`: one consistent /data
 │   │                          #   snapshot, digest- and key-pairing-verified (#53)
+│   ├── portable.py            # `encore export`/`import`: watch state as a
+│   │                          #   secret-free, cross-version document (#54)
 │   ├── doctor.py              # `encore doctor`: the offline diagnostic checklist,
 │   │                          #   exit 0/1/2, no socket without --check-upstream
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)

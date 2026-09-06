@@ -72,6 +72,14 @@ from encore.models import CHANNEL_MODES, utcnow
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
 from encore.plex import PlexMusicClient, PlexWriteAttemptError
+from encore.portable import (
+    ImportStrategy,
+    PortableError,
+    export_state,
+    import_state,
+    read_document,
+    write_document,
+)
 from encore.recommend.engine import PROVENANCE_LIMIT, refresh_recommendations
 from encore.recommend.lb import ListenBrainzClient
 from encore.secretstore import SecretDecryptionError
@@ -140,6 +148,36 @@ def _build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Replace the contents of a non-empty data directory (default: refuse)",
+    )
+
+    export = subparsers.add_parser(
+        "export",
+        help="Write a portable, secret-free description of what this install watches",
+    )
+    export.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    export.add_argument(
+        "--out", required=True, metavar="PATH", help="Write the JSON document to PATH"
+    )
+
+    imp = subparsers.add_parser(
+        "import",
+        help="Merge a watch-state document written by `export` into this install",
+    )
+    imp.add_argument("document", metavar="FILE", help="The JSON document written by `export`")
+    imp.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    imp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the merge plan and change nothing",
+    )
+    imp.add_argument(
+        "--strategy",
+        choices=[strategy.value for strategy in ImportStrategy],
+        default=ImportStrategy.KEEP_LOCAL.value,
+        help=(
+            "What to do where this install and the file disagree: keep-local "
+            "(default, list the conflict and change nothing) or prefer-file"
+        ),
     )
 
     sync = subparsers.add_parser("sync", help="Run one on-demand Plex library sync (F1)")
@@ -1270,11 +1308,70 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Write the portable watch-state document (issue #54)."""
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        document = export_state(storage)
+    finally:
+        storage.close()
+    try:
+        destination = write_document(document, args.out)
+    except PortableError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Wrote {destination}: {len(document['artists'])} artist(s), "
+        f"{len(document['recommendations'])} recommendation decision(s), "
+        f"{len(document['channels'])} channel(s)."
+    )
+    print("No Apprise URL, Plex token or feed token is in this file.")
+    return 0
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    """Merge a watch-state document into this install (issue #54)."""
+    try:
+        payload = json.loads(Path(args.document).read_text(encoding="utf-8"))
+    except OSError as exc:
+        print(f"error: cannot read {args.document}: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"error: {args.document} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    try:
+        document = read_document(payload)
+    except PortableError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    strategy = ImportStrategy(args.strategy)
+    try:
+        plan = import_state(storage, document, strategy=strategy, dry_run=args.dry_run)
+    except (PortableError, StorageError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    print(plan.render(strategy=strategy, applied=not args.dry_run))
+    return 0
+
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
     "doctor": _cmd_doctor,
     "backup": _cmd_backup,
     "restore": _cmd_restore,
+    "export": _cmd_export,
+    "import": _cmd_import,
     "sync": _cmd_sync,
     "match": _cmd_match,
     "matches": _cmd_matches,
