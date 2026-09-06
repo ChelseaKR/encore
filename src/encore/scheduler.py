@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -94,18 +96,65 @@ DEFAULT_REC_INTERVAL_HOURS = 168.0
 REC_JOB_ID = "lb-recommend"
 
 
+@contextmanager
+def _heartbeat(storage: Storage, job_id: str) -> Iterator[dict[str, object]]:
+    """Record that this job ran, and whether it worked.
+
+    `/readyz` can only see the scheduler objects in its own process, so
+    nothing outside that process could tell a job that has been failing
+    nightly from one that was never started. This writes the only offline
+    evidence there is (`encore doctor` reads it).
+
+    The yielded dict is the run's own verdict. It defaults to success and the
+    body overwrites it, because several of these runners deliberately swallow
+    their failures to keep the scheduler alive -- a run that caught a
+    `SyncError` and logged it has not succeeded, and recording it as a
+    success would be this repository's own worst case: a failure published as
+    a healthy measurement.
+
+    Writing the heartbeat can never break the job. An exception from the
+    record itself is logged and dropped; an exception from the body is
+    recorded and re-raised unchanged, so APScheduler sees exactly what it
+    saw before.
+    """
+    verdict: dict[str, object] = {"ok": True, "error": None}
+    try:
+        yield verdict
+    except Exception as exc:  # re-raised below, never swallowed
+        verdict["ok"] = False
+        verdict["error"] = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        try:
+            storage.record_scheduler_run(
+                job_id,
+                ok=bool(verdict["ok"]),
+                error=verdict["error"] if verdict["error"] is None else str(verdict["error"]),
+            )
+        except Exception:  # a heartbeat must never kill the job
+            logger.exception("could not record the %s heartbeat", job_id)
+
+
 def _run_scheduled_sync(storage: Storage) -> None:
     """One scheduled sync run: re-read credentials, sync, log counts only."""
-    credentials = storage.get_plex_credentials()
-    if credentials is None:
-        logger.warning("scheduled sync skipped: the stored Plex connection was removed")
-        return
-    base_url, token = credentials
-    try:
-        client = PlexMusicClient(base_url, token)
-        sync_artists(storage, client)
-    except SyncError as exc:
-        logger.error("scheduled sync failed: %s", exc)
+    with _heartbeat(storage, SYNC_JOB_ID) as run:
+        credentials = storage.get_plex_credentials()
+        if credentials is None:
+            logger.warning("scheduled sync skipped: the stored Plex connection was removed")
+            # Not a success. Nothing synced, and the operator needs to see
+            # that from `encore doctor` rather than from a log they are not
+            # reading.
+            run["ok"] = False
+            run["error"] = "the stored Plex connection was removed"
+            return
+        base_url, token = credentials
+        try:
+            client = PlexMusicClient(base_url, token)
+            sync_artists(storage, client)
+        except SyncError as exc:
+            logger.error("scheduled sync failed: %s", exc)
+            run["ok"] = False
+            run["error"] = f"SyncError: {exc}"
 
 
 def _configured_interval(env_var: str, default: float) -> float:
@@ -162,11 +211,12 @@ def _run_scheduled_watch(storage: Storage) -> None:
     host), so the scheduler can start before matching has happened — newly
     matched artists are picked up on the next cycle without a restart.
     """
-    client = MusicBrainzClient()
-    try:
-        watch_all_artists(storage, client)
-    finally:
-        client.close()
+    with _heartbeat(storage, WATCH_JOB_ID):
+        client = MusicBrainzClient()
+        try:
+            watch_all_artists(storage, client)
+        finally:
+            client.close()
 
 
 def build_watch_scheduler(storage: Storage) -> BackgroundScheduler | None:
@@ -199,7 +249,8 @@ def build_watch_scheduler(storage: Storage) -> BackgroundScheduler | None:
 
 def _run_scheduled_delivery(storage: Storage) -> None:
     """One scheduled delivery cycle (F4). Never raises — see the engine."""
-    run_delivery_cycle(storage)
+    with _heartbeat(storage, NOTIFY_JOB_ID):
+        run_delivery_cycle(storage)
 
 
 def build_notify_scheduler(storage: Storage) -> BackgroundScheduler | None:
@@ -244,11 +295,12 @@ def _run_scheduled_match(storage: Storage) -> None:
     excludes every artist that already has a decision, so steady state costs
     no MusicBrainz requests at all.
     """
-    client = MusicBrainzClient()
-    try:
-        run_matching_pass(storage, client)
-    finally:
-        client.close()
+    with _heartbeat(storage, MATCH_JOB_ID):
+        client = MusicBrainzClient()
+        try:
+            run_matching_pass(storage, client)
+        finally:
+            client.close()
 
 
 def build_match_scheduler(storage: Storage) -> BackgroundScheduler | None:
@@ -282,11 +334,12 @@ def build_match_scheduler(storage: Storage) -> BackgroundScheduler | None:
 
 def _run_scheduled_recommend(storage: Storage) -> None:
     """One scheduled recommendation refresh: fresh LB client, close (F7)."""
-    client = ListenBrainzClient()
-    try:
-        refresh_recommendations(storage, client)
-    finally:
-        client.close()
+    with _heartbeat(storage, REC_JOB_ID):
+        client = ListenBrainzClient()
+        try:
+            refresh_recommendations(storage, client)
+        finally:
+            client.close()
 
 
 def build_rec_scheduler(storage: Storage) -> BackgroundScheduler | None:

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChelseaKR/encore/blob/main/docs/doctor-schema.json",
+  "title": "encore doctor --json",
+  "description": "The document `encore doctor --json` prints. Committed so a healthcheck or a monitoring script can be written against a shape that is held by a test (tests/test_doctor.py) rather than against whatever last week's build happened to emit. It carries no timestamp on purpose: the output must be byte-stable across runs on unchanged state, and a generated-at field would make every run differ.",
+  "type": "object",
+  "required": ["schema", "exit_code", "summary", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "description": "Identifies this document's shape. Bumped only on a breaking change to it.",
+      "const": "encore.doctor/1"
+    },
+    "exit_code": {
+      "description": "The process exit code: 0 every check passed, 1 at least one warning, 2 at least one failure. `skipped` contributes nothing, because a check that could not run is neither a pass nor a failure.",
+      "type": "integer",
+      "enum": [0, 1, 2]
+    },
+    "summary": {
+      "description": "How many checks landed in each status. The four keys are always present, including the ones that are zero.",
+      "type": "object",
+      "required": ["pass", "warn", "fail", "skipped"],
+      "additionalProperties": false,
+      "properties": {
+        "pass": { "type": "integer", "minimum": 0 },
+        "warn": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "checks": {
+      "description": "One object per check, in the order an operator should read them.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "detail", "next_step"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "Stable identifier for the check. Scheduler checks are `scheduler:<job id>`; upstream probes, present only under --check-upstream, are `upstream:<name>`.",
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "description": "`skipped` means the check did not run and says why in `detail`. It is never a disguised pass.",
+            "type": "string",
+            "enum": ["pass", "warn", "fail", "skipped"]
+          },
+          "detail": {
+            "description": "What was observed. Never contains a Plex token, an Apprise URL, the feed token, or an artist name; text taken from a stored exception is scrubbed of anything URL-shaped first.",
+            "type": "string"
+          },
+          "next_step": {
+            "description": "What the operator should do about it. Null when, and only when, the status is `pass`.",
+            "type": ["string", "null"]
+          }
+        }
+      }
+    }
+  }
+}

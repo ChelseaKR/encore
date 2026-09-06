@@ -22,6 +22,7 @@ __all__ = [
     "MATCH_STATUSES",
     "RECOMMENDATION_STATUSES",
     "RELEASE_EVENT_KINDS",
+    "SCHEDULER_JOB_IDS",
     "SETTINGS_ROW_ID",
     "AppSettings",
     "Artist",
@@ -32,6 +33,7 @@ __all__ = [
     "Recommendation",
     "ReleaseEvent",
     "ReleaseGroup",
+    "SchedulerHeartbeat",
     "UpcomingReleaseView",
 ]
 
@@ -340,3 +342,38 @@ class UpcomingReleaseView:
     first_release_date: str
     artist_mbid: str
     artist_name: str
+
+
+# The five background jobs `encore.scheduler` builds, by their APScheduler job
+# id. A heartbeat row is keyed by one of these.
+SCHEDULER_JOB_IDS = ("plex-sync", "mb-watch", "mb-match", "notify-deliver", "lb-recommend")
+
+
+class SchedulerHeartbeat(SQLModel, table=True):
+    """When each background job last ran, and whether it worked — F0/OBS.
+
+    `/readyz` can only see the schedulers *this process* started, from
+    `app.state`, so it answers "is a scheduler object alive here" and cannot
+    answer "did the watch job actually run this week". Those are different
+    questions, and the second one is the one a self-hoster whose alerts went
+    quiet is asking. Nothing persisted it, so nothing could answer it offline
+    -- which is why `encore doctor` needs this table rather than reading the
+    scheduler objects it has no access to.
+
+    One row per job id, upserted per run. `last_error` holds the exception
+    text the run logged; it is written by the same code that logs, so it
+    carries no artist name or credential for the same reason those logs do
+    not (docs/adr/0012). A job that has never run has no row at all, and that
+    absence is reported as "never run", never as a zero-aged success.
+    """
+
+    __tablename__ = "scheduler_heartbeats"
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: str = Field(unique=True, index=True)
+    last_started_at: datetime | None = Field(default=None)
+    last_success_at: datetime | None = Field(default=None)
+    last_failure_at: datetime | None = Field(default=None)
+    last_error: str | None = Field(default=None)
+    consecutive_failures: int = Field(default=0)
+    updated_at: datetime = Field(default_factory=utcnow)

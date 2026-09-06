@@ -57,6 +57,10 @@ from encore.artistsettings import (
     parse_secondary_types,
     parse_settings_json,
 )
+from encore.doctor import exit_code as doctor_exit_code
+from encore.doctor import render_json as doctor_render_json
+from encore.doctor import render_text as doctor_render_text
+from encore.doctor import run_checks as doctor_run_checks
 from encore.matching.engine import candidates_from_json, run_matching_pass
 from encore.matching.mb import MusicBrainzClient
 from encore.models import CHANNEL_MODES
@@ -85,6 +89,21 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8321)
     serve.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Run the offline diagnostic checklist (exit 0 pass / 1 warn / 2 fail)",
+    )
+    doctor.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    doctor.add_argument(
+        "--check-upstream",
+        action="store_true",
+        help="Also probe MusicBrainz, ListenBrainz labs and the Cover Art Archive. "
+        "Without this flag the command opens no socket at all.",
+    )
+    doctor.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the report as JSON."
+    )
 
     sync = subparsers.add_parser("sync", help="Run one on-demand Plex library sync (F1)")
     sync.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
@@ -1079,8 +1098,26 @@ _RECS_COMMANDS = {
     "promote": _cmd_recs_promote,
 }
 
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Run the offline checklist and print it; the exit code is the verdict.
+
+    The exit code is the point: 0/1/2 for pass/warn/fail makes this usable
+    as a container healthcheck, so it must reflect the checks rather than
+    whether the command itself ran. A crash would exit non-zero anyway, which
+    is the correct direction.
+    """
+    results = doctor_run_checks(args.data_dir, check_upstream=args.check_upstream)
+    if args.as_json:
+        print(json.dumps(doctor_render_json(results), indent=2, sort_keys=True))
+    else:
+        print(doctor_render_text(results))
+    return doctor_exit_code(results)
+
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
+    "doctor": _cmd_doctor,
     "sync": _cmd_sync,
     "match": _cmd_match,
     "matches": _cmd_matches,

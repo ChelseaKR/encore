@@ -6,6 +6,47 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`encore doctor` — one offline answer to "what is wrong with this install".**
+  A self-hoster whose alerts went quiet had `encore channels list`, `/readyz`,
+  and logs that deliberately carry no artist names: three partial views of three
+  different things, and no single answer. `encore doctor [--data-dir]
+  [--check-upstream] [--json]` runs a fixed checklist over the data directory,
+  the key file's mode and ownership, SQLite's own `integrity_check` and journal
+  mode, the schema version, the Plex credential's presence and decryptability,
+  the review queue, channel health, the delivery queue, and each background
+  job's heartbeat. It exits 0/1/2 for pass/warn/fail so it works as a container
+  healthcheck, and it opens no socket at all unless `--check-upstream` is
+  passed. `--json` emits a document whose shape is pinned by
+  `docs/doctor-schema.json` and is byte-stable across runs on unchanged state.
+
+  Three properties are held by tests rather than by prose, and each was watched
+  to fail against a deliberate sabotage. It **opens no socket** by default —
+  checked by running the whole checklist with `socket` replaced by something
+  that raises, with a negative control proving the block actually intercepts.
+  It **never prints a secret**: the Plex token, the feed token and an Apprise
+  URL are checked for presence and decryptability, never rendered — and because
+  `notify/engine.py` stores `error=str(exc)` and an Apprise URL *is* a
+  credential (`ntfy://user:pass@…`), a stored error is scrubbed of anything
+  URL-shaped before it is shown. And a check that **could not run says so**: the
+  MusicBrainz rate-limit counter lives on an in-process singleton in the running
+  server, so a separate CLI process cannot read it, and it is reported as
+  `skipped` with that reason rather than as a comfortable `0`. `skipped`
+  contributes nothing to the exit code.
+
+- **Background jobs now record a heartbeat (schema v11).** `/readyz` could only
+  see the scheduler objects in its own process, so nothing could tell a job that
+  had been failing nightly from one that was never started, and nothing outside
+  the server could tell either. `scheduler_heartbeats` holds one row per job
+  with its last start, last success, last failure and consecutive-failure count.
+  A job that has never run has no row, and `encore doctor` reports that absence
+  as "never" rather than inventing a zero-aged success. Writing a heartbeat can
+  never break a job: a failure to record is logged and dropped, and an exception
+  from the job itself is recorded and re-raised unchanged. The runners that
+  deliberately swallow their own errors to keep the scheduler alive now mark the
+  run as failed rather than letting a caught `SyncError` read as a success.
+
 ### Fixed
 
 - **`make security` could not fail on a dependency advisory, and on `main` it was
