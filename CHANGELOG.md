@@ -8,6 +8,38 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`encore export` and `encore import` — watch state as a portable,
+  secret-free document.** `encore backup` (#53) is a byte-level copy of one
+  install, restorable only by the same build. This is the other half: a
+  cross-version, human-readable, diffable JSON description of what an install
+  *watches and prefers* — every artist with its per-artist override, the global
+  defaults, recommendation dismissals and promotions, and channel names and
+  modes. Someone rebuilding on new hardware, or sharing a watch policy with a
+  friend, uses it. `import` takes `--dry-run` and
+  `--strategy keep-local|prefer-file`.
+
+  **Secrets are structurally absent**, and the exclusion list is an allow-list
+  because here the risk is including something rather than omitting it. That
+  list leaves out `NotificationChannel.last_error` by name, which is the
+  non-obvious one: `notify/engine.py` records `error=str(exc)` on a failed
+  send, an Apprise URL is a credential, and an Apprise exception can quote the
+  URL it failed on. A field that usually holds a harmless message and
+  occasionally holds a credential is a credential field. `import` refuses a
+  document that has grown a secret-bearing key at all, by name and wherever it
+  appears.
+
+  **Absence is exported as absence.** An artist with no per-artist override
+  exports no override — not a copy of today's resolved defaults, which would
+  pin every artist to the current policy and silently stop a later change to
+  the defaults from applying. An unconfigured install exports a small document,
+  not a dump of built-ins.
+
+  A channel cannot be imported, and the plan says so rather than skipping the
+  section quietly: the Apprise URL *is* the channel, it is deliberately not in
+  the document, and an operator moving to new hardware must not believe their
+  notifications came with them. Artists this install has never synced are
+  reported the same way, with the reason. (#54)
+
 - **`encore backup` and `encore restore` — one consistent, verified snapshot of
   `/data`.** The README described backup as a manual procedure with two sharp
   edges it documented itself: a live copy of `encore.db` alone can capture a
