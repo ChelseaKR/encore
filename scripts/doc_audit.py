@@ -201,6 +201,54 @@ def tracked_files() -> frozenset[str]:
     return frozenset(p for p in result.stdout.split("\0") if p)
 
 
+@cache
+def uncommitted_inventory_files() -> tuple[str, ...]:
+    """Files that would join the inventory the moment they are committed.
+
+    ``tracked_files`` answers over committed content, deliberately: enumerating
+    the filesystem made the block depend on the checkout rather than the commit,
+    and ``9f8ba81`` fixed that. The cost of the fix is that a *new* file is
+    invisible here until it is added, so ``--check`` reports OK over a tree it
+    cannot see all of, and only starts failing at commit time -- which is why
+    that failure always arrives at push rather than while you are working.
+
+    Reporting green over an incomplete view is the shape this repository treats
+    as its worst case, so the tool says what it could not see. It is a note, not
+    a finding: these files are genuinely not part of the commit yet, ``--check``
+    is still right to pass, and nothing here reaches the rendered block. What it
+    removes is the surprise.
+
+    ``--exclude-standard`` honours ``.gitignore``, so build artifacts and
+    ``.venv`` are already out; unlike ``EXCLUDED_DIR_NAMES`` that is by
+    construction rather than by a hand-maintained list. Fails soft, not closed:
+    a git that cannot answer this must not fail a check that does not depend on
+    the answer.
+    """
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell, repo-local
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--others", "--exclude-standard"],  # noqa: S607
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover - env
+        return ()
+    candidates = (p for p in result.stdout.split("\0") if p)
+    return tuple(
+        sorted(
+            rel
+            for rel in candidates
+            if not _excluded(rel)
+            and (
+                (rel.endswith(".md"))
+                or (rel.startswith("tests/") and Path(rel).name.startswith("test_"))
+                or (rel.startswith("docs/adr/"))
+                or rel in (*ROOT_LEGAL_DOCS, *ROOT_TEMPLATES)
+            )
+        )
+    )
+
+
 def _excluded(rel: str) -> bool:
     """Report whether this root-relative path is outside the authored-doc surface."""
     if rel.startswith(EXCLUDED_PATH_PREFIXES):
@@ -460,6 +508,25 @@ def splice(document: str, generated: str) -> str:
     return document[:start] + generated + document[end + len(END) + 1 :]
 
 
+def _warn_about_what_it_could_not_see() -> None:
+    """Name the uncommitted files that will change this block once committed."""
+    pending = uncommitted_inventory_files()
+    if not pending:
+        return
+    print(
+        f"doc audit NOTE: {len(pending)} file(s) are not committed yet and are therefore "
+        "outside this inventory. The counts above will change when they are:",
+        file=sys.stderr,
+    )
+    for rel in pending:
+        print(f"  {rel}", file=sys.stderr)
+    print(
+        "  This is not a finding -- the inventory describes the commit, by design "
+        "(see tracked_files). Run `make docs-audit` again after `git add`.",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Regenerate the block, or with ``--check`` compare and return ``1`` on drift."""
     parser = argparse.ArgumentParser(description="Generate or check the doc audit.")
@@ -482,10 +549,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print("doc audit OK: the committed inventory, counts, and link check match the tree.")
+        _warn_about_what_it_could_not_see()
         return 0
 
     AUDIT.write_text(updated, encoding="utf-8")
     print(f"doc audit: regenerated the generated block in {_relative(AUDIT)}.")
+    _warn_about_what_it_could_not_see()
     return 0
 
 

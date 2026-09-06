@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
 from scripts.doc_audit import (
     AUDIT,
     BEGIN,
@@ -26,6 +27,7 @@ from scripts.doc_audit import (
     main,
     render,
     splice,
+    uncommitted_inventory_files,
 )
 
 # A name no repository file will ever have, so a leaked temp file is obvious.
@@ -122,6 +124,63 @@ def test_a_stray_untracked_markdown_file_cannot_move_the_counts() -> None:
         assert render() == before
     finally:
         stray.unlink()
+
+
+def test_the_tool_names_a_file_it_cannot_see_yet(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A check that reports OK over an incomplete view has to say so.
+
+    `tracked_files` answers over committed content on purpose -- the test above
+    is why -- and the price is that a *new* test module or document is invisible
+    here until `git add`. So `--check` prints OK over a tree it cannot see all
+    of, and the failure it was going to produce arrives later, at push, which is
+    the papercut recorded in #73.
+
+    The fix is not to count them: that would undo the invariant above. It is to
+    name them. This plants one of each and holds three things -- the note lists
+    them, the exit status is still 0 because the inventory is still correct for
+    the commit, and the rendered block does not move.
+    """
+    uncommitted_inventory_files.cache_clear()
+    module = ROOT / "tests" / f"test_{_STRAY.replace('-', '_')}.py"
+    note = ROOT / "docs" / f"{_STRAY}-note.md"
+    assert not module.exists() and not note.exists(), "a previous run leaked its temp file"
+
+    before = render()
+    module.write_text("def test_placeholder() -> None:\n    assert True\n", encoding="utf-8")
+    note.write_text("# stray\n", encoding="utf-8")
+    try:
+        uncommitted_inventory_files.cache_clear()
+        pending = uncommitted_inventory_files()
+        assert module.relative_to(ROOT).as_posix() in pending
+        assert note.relative_to(ROOT).as_posix() in pending
+
+        assert main(["--check"]) == 0, "an uncommitted file is not drift; the commit is right"
+        captured = capsys.readouterr()
+        assert "doc audit OK" in captured.out
+        assert "not committed yet" in captured.err
+        assert module.relative_to(ROOT).as_posix() in captured.err
+        assert "not a finding" in captured.err
+
+        assert render() == before, "the note must not move a count"
+    finally:
+        module.unlink()
+        note.unlink()
+        uncommitted_inventory_files.cache_clear()
+
+
+def test_a_clean_tree_gets_no_note(capsys: pytest.CaptureFixture[str]) -> None:
+    """The other direction: the note must be silent when there is nothing to say.
+
+    A warning that always prints is a warning nobody reads, and this one sits on
+    the success path of a gate that runs in `make verify` and the pre-push hook.
+    """
+    uncommitted_inventory_files.cache_clear()
+    if uncommitted_inventory_files():
+        return  # the developer has uncommitted files right now; nothing to assert
+    assert main(["--check"]) == 0
+    assert "not committed yet" not in capsys.readouterr().err
 
 
 def test_link_check_actually_checks_links() -> None:
