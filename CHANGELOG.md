@@ -8,6 +8,33 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`encore backup` and `encore restore` — one consistent, verified snapshot of
+  `/data`.** The README described backup as a manual procedure with two sharp
+  edges it documented itself: a live copy of `encore.db` alone can capture a
+  torn WAL, and a database copied without its companion Fernet key is
+  unrecoverable by design (ADR-0008). `backup` takes the database through
+  SQLite's online-backup API, so the copy is a single consistent image taken
+  while the schedulers keep writing, and packs `encore.db`, `encore.key` and a
+  `manifest.json` — schema version, Encore version, SHA-256 of each file — into
+  one tar with deterministic headers.
+
+  `restore` verifies the manifest, the digests and the key/database pairing
+  against a staging copy *before* it writes anything, so a corrupt, truncated,
+  altered or mismatched archive leaves the operator's data directory exactly as
+  it was. It refuses a non-empty target without `--force`, refuses an archive
+  whose schema is newer than the running build, rejects an archive carrying any
+  member outside the fixed three, and runs the forward migrations on open so an
+  older archive lands usable rather than merely present.
+
+  The pairing check is tri-state on purpose. It is proved by decrypting a stored
+  ciphertext, and an install that was never configured has none — so that case
+  reports `skipped` with the reason, never `ok`. Reporting an untested pairing as
+  verified would be absence rendered as a value in the one place an operator is
+  relying on the answer. Two tests hold the tri-state open, and two more pin the
+  probe list against the schema's `*_cipher` columns in both directions, because
+  a probe that silently stopped resolving would turn the check into a permanent
+  `skipped` that nothing would notice. (#53)
+
 - **`encore matches explain` — the evidence behind any match decision, and
   `encore matches audit` for reviewing them in bulk.** The review queue said
   *that* a match was uncertain, never why, and a wrong auto-match (the #32

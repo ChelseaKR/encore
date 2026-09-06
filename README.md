@@ -93,6 +93,8 @@ encore/
 │   ├── models.py              # SQLModel tables — settings, artists, matches, releases,
 │   │                          #   events, notification channels, delivery queue
 │   ├── secretstore.py         # Fernet secrets-at-rest cipher (docs/adr/0008)
+│   ├── backup.py              # `encore backup`/`restore`: one consistent /data
+│   │                          #   snapshot, digest- and key-pairing-verified (#53)
 │   ├── doctor.py              # `encore doctor`: the offline diagnostic checklist,
 │   │                          #   exit 0/1/2, no socket without --check-upstream
 │   ├── plex/                  # read-only Plex client wrapper (F1, docs/adr/0007)
@@ -177,16 +179,34 @@ difference survives a restart.
 ## Back up and restore `/data`
 
 Treat the entire data directory as one consistency unit: it contains the SQLite
-database, its WAL files when active, and `encore.key`. Stop the Encore process or
-container before copying or snapshotting it, then copy **all of `/data`** with your
-normal volume-backup tooling before restarting the service. A live copy of only
+database, its WAL files when active, and `encore.key`. A live copy of only
 `encore.db` can be inconsistent, and a database copied without its matching key is
 intentionally unrecoverable.
 
-Restore the complete fileset from the same backup while Encore is stopped, keep
-`encore.key` owned by the service account with mode `0600`, and only then start the
-service. Never mix a database from one backup with a key from another; startup will
-fail closed rather than create a replacement key.
+`encore backup` does both correctly without stopping the container:
+
+```bash
+encore backup --data-dir /data --out encore-$(date +%F).tar
+encore restore encore-2026-09-06.tar --data-dir /data
+```
+
+The database is copied through SQLite's online-backup API, so WAL state is folded
+into one consistent image while the schedulers keep writing. The archive holds
+`encore.db`, `encore.key` and a `manifest.json` recording the schema version, the
+Encore version and a SHA-256 of each file. `restore` verifies those digests and
+proves the archive's key actually decrypts the archive's database *before* it
+writes anything, so a corrupt or mismatched archive leaves the target directory
+untouched. It refuses a non-empty data directory unless `--force` is given, and
+migrates an older archive forward on open.
+
+The pairing line reports `skipped`, not `ok`, when the archive's database holds no
+encrypted column at all — there was nothing to decrypt, so the check did not run,
+and it says so rather than showing a tick it did not earn.
+
+The manual procedure still works: stop the process, copy **all of `/data`**, and on
+restore keep `encore.key` owned by the service account with mode `0600` before
+starting the service. Never mix a database from one backup with a key from another;
+startup will fail closed rather than create a replacement key.
 
 A whole-volume backup contains both ciphertext and the key that decrypts it.
 Fernet therefore does **not** protect that backup from disclosure: encrypt and
