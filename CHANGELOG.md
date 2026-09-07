@@ -8,6 +8,57 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`encore settings simulate` — what a policy change would have cost, before you make it.**
+  F10's defaults are quiet by design and opting into EPs or singles is one command, but
+  the cost of that command was invisible until a week of alerts had landed. This replays
+  what encore already recorded through a proposed policy and prints what would have been
+  delivered, per channel, by artist, by release type and by day, with the ten noisiest
+  artists named. `--diff` lists only the observations whose outcome moves; `--json` emits
+  the same figures. Offline, deterministic, socket-guarded by test. (#58)
+
+  **It replays release-groups, not the event log, and that distinction is the feature.**
+  Type filters gate event *creation*, not delivery (`src/encore/watch/engine.py`): a group
+  whose type is not opted in is recorded and raises no event at all. So under an
+  albums-only policy no single ever became an event, and the obvious implementation —
+  replaying `events` — would report "widening to singles: +0" and be wrong by exactly the
+  amount the operator asked about. An absence, rendered as a measurement, in answer to the
+  one question the command exists for. The corpus is therefore `release_groups`, which the
+  diff engine records exactly and on purpose so that "a later opt-in starts from truth";
+  the event log is still read, as ground truth for what did happen.
+  `test_widening_to_singles_finds_the_singles_that_never_became_events` fails outright
+  against an event-log implementation.
+
+  **The blind spot is named rather than papered over.** An artist's first poll is silent
+  under every policy (ADR-0011), so a back catalogue first seen inside the simulated window
+  cannot be replayed at all. Rather than guess at a tolerance for "which rows belong to the
+  baseline poll", the test is exact: an artist whose earliest recorded group falls inside
+  the window was baselined inside it, and its observations are excluded and counted, with
+  the reason printed. Days on which nothing at all was recorded are counted too — a missed
+  watch run is not a quiet day — as are observations the reconstruction cannot explain
+  (allowed by the policy in force, post-baseline, and yet carrying no event).
+
+  **The simulation shares the delivery path's own predicates rather than restating them**,
+  in the same order: type filter, then muting, then channel age, then routing, then the
+  priority/cadence split. A release excluded by type is reported as filtered even when its
+  artist is muted, because muting never got a say about it — telling the operator that
+  un-muting would bring it back would be false. The anchor test builds its fixture through
+  `watch_artist` and `Storage.ensure_deliveries` and requires the replay of today's policy
+  to reproduce the delivery rows that path actually created.
+
+  Six negative controls, each confirmed present in the source before running and reverted
+  byte-identically after: replaying the event log instead of the group rows, treating a
+  baselined-in-window artist as ordinary, checking muting before the type filter, dropping
+  a zero-delivery channel from the table, ignoring the channel-age rule, and hiding the
+  quiet-day count. Two of them initially failed to go red — the tests did not cover those
+  behaviours — which is what negative controls are for; the missing tests were added and
+  all six now fail as they should.
+
+  `Storage.effective_watch_settings_for_mbids` gains an optional `defaults` argument so the
+  simulator can resolve a *proposed* global layer through the same code delivery resolves
+  the stored one. No other caller passes it, and every layering rule is unchanged: a
+  simulation that resolved policy differently from delivery would be measuring its own
+  reimplementation.
+
 - **`encore matches score` — the audit sheet, read back.** `encore matches audit`
   writes the sample sheet the U8 validation spike needs (issue #46) and nothing
   read it. The only path from that sheet to M1's "≥90% auto-match on the reference

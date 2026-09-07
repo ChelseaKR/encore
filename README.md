@@ -59,6 +59,9 @@ recommendable in public without a legality asterisk.
 - **Stays quiet by default**: albums-only until you opt in to EPs, singles, live
   recordings, or compilations — globally or per artist (`encore artists settings`),
   with muting (forever or until a date) and per-artist priority tiers.
+  `encore settings simulate --allow-primary album,ep --since 90d` replays your own
+  recorded history through a proposed policy and prints what it would have delivered,
+  per channel and per artist, before you change anything.
 - **Recommends** similar artists via ListenBrainz labs, weighted by your actual
   listening, with visible provenance ("similar to X, Y you already own") and one-command
   dismiss/promote (`encore recommend`, `encore recommendations`). Promoting a candidate
@@ -118,6 +121,8 @@ encore/
 │   │                          #   types, muting, per-artist and global priority
 │   ├── channelroute.py        # F10's channel-side half: which slice of events
 │   │                          #   each channel subscribes to (#65)
+│   ├── simulate.py            # replay recorded release-groups through a proposed
+│   │                          #   policy: what it would have delivered (#58)
 │   └── recommend/             # F7/F8 recommendations: ListenBrainz labs
 │                              #   similar-artists with provenance, promote/dismiss
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
