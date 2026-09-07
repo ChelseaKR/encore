@@ -8,6 +8,46 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`encore matches score` — the audit sheet, read back.** `encore matches audit`
+  writes the sample sheet the U8 validation spike needs (issue #46) and nothing
+  read it. The only path from that sheet to M1's "≥90% auto-match on the reference
+  library" ran through arithmetic done by hand, and a published figure nobody can
+  re-derive from the artifact is exactly the kind of number this repository has had
+  to withdraw elsewhere. `encore matches score --in audit.jsonl` reads the sheet,
+  tallies it by decision status, and reports the rate.
+
+  It is strict in three specific places, each of which is a way to publish an
+  absence as a measurement. **An unlabelled row is not a data point:** `correct:
+  null` means nobody has looked yet, so it enters neither the numerator nor the
+  denominator, and the report states how many there were rather than quietly
+  shrinking the sample. **A rate over a partly-labelled sheet is not printed at
+  all** unless `--partial` asks for it by name, and then it carries its own gap
+  and an explicit note that it is not the U8 figure. **A label that is not a
+  boolean is refused by line number, not coerced** — `"correct": "yes"` is truthy
+  in Python and would have scored as a correct match; so would `1`, and `""` would
+  have scored as a wrong one. Unparseable lines, non-objects and unknown decision
+  statuses are refused the same way and counted, and any refusal exits non-zero,
+  because a scorer that reads three quarters of a sheet and exits 0 is a check
+  that cannot fail on the input problem it exists to catch.
+
+  **Precision and coverage are reported as two figures, not one.** ADR-0006 and
+  `docs/ROADMAP.md` §7 both ask for auto-match *precision* — of the decisions the
+  matcher made without asking, how many were right — and only `auto` rows enter
+  that denominator; folding in `manual`, `pending` or `skipped` rows would move
+  the number without measuring anything. "How many artists auto-matched at all"
+  is a genuinely useful second figure and is labelled as coverage.
+
+  Six negative controls were run against the guards rather than only asserted:
+  coercing a non-boolean label by truthiness, counting unlabelled rows in the
+  denominator, publishing a rate over an incomplete sheet, letting an empty tally
+  claim to be complete, summing every status into the auto denominator, and
+  accepting an unknown status. Each was applied to the source, confirmed present
+  in the file, run red, and restored byte-identically.
+
+  Nothing here decides whether the criterion is met. The library, the labelling
+  pass, and the call that follows it — rebalance the threshold or freeze it —
+  stay with the maintainer, per `docs/adr/0006`.
+
 - **The doc audit names what it could not see.** `scripts/doc_audit.py` enumerates
   git-tracked files on purpose (`9f8ba81`: a filesystem walk let an untracked scratch
   note move the counts, so `--check` disagreed with itself across two checkouts of the
