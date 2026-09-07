@@ -469,7 +469,10 @@ def _codeql_analyze_job() -> dict[str, object]:
 
 def _codeql_upload_setting() -> str:
     """`upload:` as the workflow actually sets it, defaulting the way the action does."""
-    for step in _codeql_analyze_job().get("steps") or []:
+    steps = _codeql_analyze_job().get("steps") or []
+    assert isinstance(steps, list)
+    for step in steps:
+        assert isinstance(step, dict)
         uses = step.get("uses")
         if isinstance(uses, str) and "codeql-action/analyze" in uses:
             with_block = step.get("with") or {}
@@ -487,9 +490,7 @@ def test_a_codeql_finding_still_fails_the_run() -> None:
     still there and still reads the analysis rather than something else.
     """
     steps = _job_run_steps(CODEQL_WORKFLOW, "analyze")
-    gating = [
-        run for run in steps if "codeql-results" in run and "exit 1" in run and "jq" in run
-    ]
+    gating = [run for run in steps if "codeql-results" in run and "exit 1" in run and "jq" in run]
     assert gating, (
         "codeql.yml no longer has a step that reads the SARIF and exits non-zero on a "
         "finding. Code scanning alerts do not fail a build, so without this step a "
@@ -505,7 +506,14 @@ def test_a_missing_analysis_cannot_read_as_a_clean_one() -> None:
     never produced SARIF would score zero findings and pass. Measured.
     """
     steps = _job_run_steps(CODEQL_WORKFLOW, "analyze")
-    gating = next(run for run in steps if "codeql-results" in run and "exit 1" in run)
+    candidates = [run for run in steps if "codeql-results" in run and "exit 1" in run]
+    assert candidates, (
+        "codeql.yml has no step that reads the SARIF and can exit non-zero; see "
+        "test_a_codeql_finding_still_fails_the_run for what that costs."
+    )
+    gating = candidates[0]
+    # `nullglob` off is a different, louder failure: the unmatched glob stays
+    # literal and jq exits 2. Only the nullglob path can score absence as zero.
     if "nullglob" in gating:
         assert re.search(r'\$\{#\w+\[@\]\}"?\s*-eq\s*0', gating), (
             "codeql.yml's findings gate enables `nullglob` without checking that the "
@@ -543,8 +551,19 @@ def test_the_roadmap_says_where_codeql_findings_actually_go() -> None:
     """
     upload = _codeql_upload_setting()
     status = _roadmap_row(_CODEQL_METRIC)[-1]
-    assert f"`upload: {upload}`" in status, (
-        f"docs/ROADMAP.md §7's CodeQL row does not state the workflow's `upload: {upload}` "
-        f"posture. The row is the published claim about where findings go; it has to name "
-        f"what codeql.yml actually does."
+    # Anchored on "sets `upload: X`", not on the bare value. The first version of
+    # this gate looked for "`upload: {upload}`" anywhere in the cell, and a
+    # negative control walked through it: the row *narrates* the correction, so it
+    # quotes the old `upload: never` alongside the new posture. Both values were
+    # present, and the check passed whichever one the workflow held. A gate that
+    # accepts every answer is the defect this row exists to describe.
+    stated = re.search(r"sets `upload: (\w+)`", status)
+    assert stated is not None, (
+        "docs/ROADMAP.md §7's CodeQL row no longer says what `upload:` codeql.yml sets. "
+        "The row is the published claim about where findings go, and it has to state the "
+        "current posture in a form that cannot also match the posture it replaced."
+    )
+    assert stated.group(1) == upload, (
+        f"docs/ROADMAP.md §7's CodeQL row says codeql.yml sets `upload: {stated.group(1)}`; "
+        f"the workflow sets `upload: {upload}`."
     )
