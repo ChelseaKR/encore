@@ -27,6 +27,7 @@ from encore.matching.explain import (
     EVIDENCE_CANDIDATES_ONLY,
     EVIDENCE_COMPLETE,
     EVIDENCE_NONE,
+    EVIDENCE_UNREADABLE,
     audit_record,
     explain_match,
     render_json,
@@ -42,6 +43,7 @@ from encore.matching.scoring import (
     explain_candidate,
     score_candidate,
 )
+from encore.models import ArtistMatch
 from encore.storage import Storage
 from tests.mb_fixtures import MATCH_CASES, mb_artist, mb_search_response
 
@@ -403,3 +405,139 @@ class TestTheDocumentedConstants:
         text = self._text()
         for term in terms:
             assert f"`{term.name}`" in text, f"{term.name} is not in the terms table"
+
+
+class TestWhatCouldNotBeRead:
+    """A failed read is not an absence, and this module said it was.
+
+    `_stored_candidates` mapped a corrupt `candidates_json` to `[]`, which is
+    the same value an artist that has never been through the matcher produces.
+    The explanation then reported `evidence: none`, printed "this artist has
+    never been matched", and told the operator "No candidate was stored, so the
+    decision cannot be attributed to one" — three statements about the matcher,
+    on a row where the matcher had in fact run and written its evidence.
+
+    It also reached the audit sheet. `audit_record` wrote `candidate_count: 0`
+    for such a row, and `encore matches audit` is the input to M1's ≥90%
+    auto-match precision measurement (issue #46). `matching/audit.py` refuses
+    to score a line it cannot read, line by line, and says so; the writer that
+    feeds it was manufacturing readable lines out of unreadable rows.
+    """
+
+    def _corrupt(self, storage: Storage, key: str, candidates_json: str) -> ArtistMatch:
+        return storage.save_artist_match(
+            key,
+            "Radiohead",
+            "auto",
+            "mb-1",
+            0.95,
+            candidates_json,
+            hints_json=json.dumps({"name": "Radiohead"}),
+            decision_reason="auto-matched",
+        )
+
+    def test_a_corrupt_candidate_column_is_not_never_matched(self, storage: Storage) -> None:
+        row = self._corrupt(storage, "key-corrupt", '[{"mbid": "mb-1", "name": ')
+        explanation = explain_match(row)
+
+        assert explanation.evidence == EVIDENCE_UNREADABLE
+        assert explanation.evidence != EVIDENCE_NONE
+        assert explanation.candidates == ()
+        assert any("could not be read back" in note for note in explanation.notes)
+        assert any("not valid JSON" in note for note in explanation.notes)
+
+        report = render_text(explanation)
+        assert "never been matched" not in report
+        assert "stored, and unreadable" in report
+        assert "No candidate was stored" not in explanation.deciding
+        assert "could not be read" in explanation.deciding
+        # The recorded reason is still the authority on what was decided.
+        assert explanation.reason == "auto-matched"
+
+    def test_a_candidate_column_of_the_wrong_shape_is_unreadable(self, storage: Storage) -> None:
+        # Valid JSON, wrong type. This took the same `return []` path.
+        row = self._corrupt(storage, "key-object", json.dumps({"mbid": "mb-1"}))
+        explanation = explain_match(row)
+
+        assert explanation.evidence == EVIDENCE_UNREADABLE
+        assert any("not a list of candidates" in note for note in explanation.notes)
+
+    def test_a_list_holding_no_candidate_objects_is_unreadable(self, storage: Storage) -> None:
+        row = self._corrupt(storage, "key-scalars", json.dumps(["mb-1", "mb-2"]))
+        explanation = explain_match(row)
+
+        assert explanation.evidence == EVIDENCE_UNREADABLE
+        assert any("none of its entries is a candidate object" in n for n in explanation.notes)
+
+    def test_a_stored_empty_list_is_a_finding_and_not_a_failed_read(self, storage: Storage) -> None:
+        """The boundary that keeps the new state honest.
+
+        `[]` means the matcher looked and MusicBrainz returned nothing. That is
+        a recorded answer, and calling it unreadable would be the same defect
+        pointed the other way: a real finding reported as a broken row.
+        """
+        row = storage.save_artist_match(
+            "key-empty",
+            "Nobody At All",
+            "pending",
+            None,
+            None,
+            json.dumps([]),
+            hints_json=json.dumps({"name": "Nobody At All"}),
+            decision_reason="no-candidates",
+        )
+        explanation = explain_match(row)
+
+        assert explanation.evidence == EVIDENCE_NONE
+        assert "nothing to score" in explanation.deciding
+        assert not any("could not be read" in note for note in explanation.notes)
+
+    def test_corrupt_hints_are_not_reported_as_hints_never_recorded(self, storage: Storage) -> None:
+        legacy = json.dumps([{"mbid": "mb-1", "name": "Radiohead", "score": 0.95, "mb_score": 100}])
+        row = storage.save_artist_match(
+            "key-badhints",
+            "Radiohead",
+            "auto",
+            "mb-1",
+            0.95,
+            legacy,
+            hints_json='{"name": ',
+            decision_reason="auto-matched",
+        )
+        explanation = explain_match(row)
+
+        # The scores were measured and still stand, so this is candidates-only
+        # — but the note has to say the hints were written and unreadable, not
+        # that the matcher never recorded them.
+        assert explanation.evidence == EVIDENCE_CANDIDATES_ONLY
+        assert any(
+            "recorded on this row and could not be read back" in n for n in explanation.notes
+        )
+        assert not any("were not recorded on this row" in n for n in explanation.notes)
+        assert explanation.candidates[0].recorded_score == 0.95
+
+    def test_the_audit_sheet_does_not_count_candidates_it_could_not_read(
+        self, storage: Storage
+    ) -> None:
+        row = self._corrupt(storage, "key-audit", "{")
+        record = audit_record(explain_match(row))
+
+        assert record["evidence"] == EVIDENCE_UNREADABLE
+        assert record["candidate_count"] is None, (
+            "an unreadable evidence column was written into the audit sheet as "
+            "`candidate_count: 0`, which reads as a measured finding"
+        )
+        assert record["correct"] is None
+
+    def test_a_readable_row_still_reports_its_real_candidate_count(
+        self, storage: Storage, httpx_mock: HTTPXMock
+    ) -> None:
+        # The other direction: `None` must mean unreadable, not "sometimes".
+        case = next(c for c in MATCH_CASES if c.expected_status == "auto")
+        httpx_mock.add_response(json=case.response)
+        row = _engine(storage).match_artist("key-good", case.hints)
+        record = audit_record(explain_match(row))
+
+        assert record["evidence"] != EVIDENCE_UNREADABLE
+        assert isinstance(record["candidate_count"], int)
+        assert record["candidate_count"] > 0

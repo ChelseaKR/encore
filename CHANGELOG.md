@@ -8,6 +8,33 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A corrupt evidence column explained as "this artist has never been matched".**
+  `encore matches explain` opens with a rule in bold — *what was not recorded is
+  reported as not recorded* — and its own reader broke it. `_stored_candidates`
+  returned `[]` for a `candidates_json` that failed to parse, which is the same value
+  an artist that has never been through the matcher produces. Downstream, that row
+  reported `evidence: none`, rendered "candidates: none stored — this artist has never
+  been matched", and gave the operator the deciding sentence "No candidate was stored,
+  so the decision cannot be attributed to one." All three are claims about the
+  *matcher*, made about a row where the matcher had run and written its evidence. The
+  same collapse applied to a `candidates_json` holding the wrong shape, and to a
+  corrupt `hints_json`, which reported as "the hints ... were not recorded on this row".
+
+  It did not stop at the display. `audit_record` wrote `candidate_count: 0` for such a
+  row into the sheet `encore matches audit` produces, and that sheet is the input to
+  M1's ≥90% auto-match precision measurement (issue #46). `matching/audit.py` is
+  scrupulous in the other direction — it refuses to score a line it cannot read and
+  reports each refusal by line number — so the writer was manufacturing readable lines
+  out of unreadable rows and handing them to a reader built to reject exactly that.
+
+  Absent, unreadable and present are now three states. `EVIDENCE_UNREADABLE` is
+  reported with a note naming what could not be read, the deciding sentence says the
+  evidence is unreadable instead of attributing the decision to nothing, the text
+  report distinguishes "stored, and unreadable" from "none stored", and an unreadable
+  row's `candidate_count` is `null` rather than `0`. A stored empty list deliberately
+  stays *absent*: `[]` is the recorded finding that MusicBrainz returned nothing, and
+  calling it unreadable would be the same defect pointed the other way.
+
 - **Every CodeQL analysis was being deleted with the runner that produced it.**
   `codeql.yml` carried `upload: never`, with the comment "no GHAS code scanning on this
   private repo". Both halves of that premise had expired. `encore` is public — ADR 0010's
