@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import quote
 
 from encore.endpoints import EndpointConfigError, resolve_endpoints
@@ -64,10 +65,22 @@ DIGEST_ITEM_LIMIT = 25
 
 @dataclass(frozen=True)
 class RenderedNotification:
-    """The service-agnostic message an Apprise channel is asked to deliver."""
+    """The service-agnostic message a channel is asked to deliver.
+
+    ``envelopes`` is the machine-readable companion to ``title``/``body``, and it
+    is empty for every Apprise channel. A webhook subscriber does not want prose
+    it has to scrape; it wants the event. Carrying both on one object keeps the
+    delivery engine's retry, backoff and channel-health bookkeeping identical for
+    the two kinds of channel -- the difference is which field the sender reads,
+    not a second delivery path with its own failure semantics.
+
+    Filled by `encore.notify.engine` (not here) because building an envelope is
+    `encore.notify.webhook`'s job, and that module reads this one.
+    """
 
     title: str
     body: str
+    envelopes: tuple[dict[str, Any], ...] = ()
 
 
 def cover_art_url(release_group_mbid: str, *, base_url: str | None = None) -> str:

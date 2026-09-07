@@ -73,6 +73,12 @@ recommendable in public without a legality asterisk.
 - **Never downloads music.** No Soulseek, no indexers, no YouTube ripping, no Lidarr
   coupling in-product. At most: standard outbound webhooks on new-release events so
   *other* tools can subscribe — Encore's responsibility ends at the notification.
+  That "at most" is now built: `encore channels add --kind webhook` POSTs a signed,
+  versioned JSON event to a URL you control, so a Home Assistant automation or a
+  small script can subscribe without scraping prose written for a person. The
+  payload carries the artist, the release group and links, and nothing else about
+  your library — no Plex token, no internal identifiers, and nothing about where to
+  get anything. See [docs/webhooks.md](docs/webhooks.md).
 - **Not a media server or player.** No streaming, no in-app playlists — deep-link out
   to Plex/Plexamp instead.
 - **Not a cloud service.** Self-hosted only. No accounts, no telemetry, no
