@@ -75,7 +75,7 @@ from encore.matching.explain import audit_record, explain_match
 from encore.matching.explain import render_json as explain_render_json
 from encore.matching.explain import render_text as explain_render_text
 from encore.matching.mb import MusicBrainzClient
-from encore.models import CHANNEL_MODES, utcnow
+from encore.models import CHANNEL_KIND_WEBHOOK, CHANNEL_KINDS, CHANNEL_MODES, utcnow
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
 from encore.plex import PlexMusicClient, PlexWriteAttemptError
@@ -308,10 +308,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     channel_add = channels_sub.add_parser(
         "add",
-        help="Add a channel; the Apprise URL is prompted or piped on stdin, never passed as a flag",
+        help="Add a channel; the URL is prompted or piped on stdin, never passed as a flag",
     )
     channel_add.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
     channel_add.add_argument("--name", required=True, help="Your label for this channel")
+    channel_add.add_argument(
+        "--kind",
+        choices=CHANNEL_KINDS,
+        default="apprise",
+        help=(
+            "apprise (default): a rendered message to one of Apprise's services. "
+            "webhook: a signed, versioned JSON event POSTed to your own URL so another "
+            "tool can subscribe (see docs/webhooks.md). A webhook channel is also "
+            "prompted for a signing secret."
+        ),
+    )
     channel_add.add_argument("--mode", choices=CHANNEL_MODES, default="instant")
     channel_add.add_argument(
         "--digest-hours",
@@ -567,8 +578,18 @@ def _read_token() -> str:
 
 
 def _read_channel_url() -> str:
-    """Read an Apprise channel URL — a credential, so hidden like the token."""
-    return _read_hidden("Apprise URL (input hidden): ")
+    """Read a channel URL — a credential, so hidden like the token.
+
+    One prompt for both kinds. Taking the kind as an argument would have been
+    tidier prose and would have broken every caller that already stubs this
+    function, for a word in a prompt.
+    """
+    return _read_hidden("Channel URL (Apprise URL, or webhook URL) (input hidden): ")
+
+
+def _read_channel_secret() -> str:
+    """Read a webhook channel's HMAC signing secret. Also a credential."""
+    return _read_hidden("Webhook signing secret (input hidden): ")
 
 
 def _cmd_plex_configure(args: argparse.Namespace) -> int:
@@ -934,25 +955,48 @@ def _cmd_feeds(args: argparse.Namespace) -> int:
 
 def _cmd_channels_add(args: argparse.Namespace) -> int:
     """Add a notification channel (URL prompted or piped, encrypted at rest)."""
+    kind = getattr(args, "kind", "apprise")
     url = _read_channel_url()
     if not url:
-        print("error: empty Apprise URL", file=sys.stderr)
+        print("error: empty channel URL", file=sys.stderr)
         return 2
+    secret: str | None = None
+    if kind == CHANNEL_KIND_WEBHOOK:
+        secret = _read_channel_secret()
+        if not secret:
+            # Refused rather than defaulted. An unsigned webhook looks exactly
+            # like a working one until somebody else finds the URL.
+            print(
+                "error: a webhook channel needs a signing secret; without one every "
+                "event it sends is unsigned",
+                file=sys.stderr,
+            )
+            return 2
     try:
         storage = Storage(args.data_dir)
     except StorageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     try:
-        storage.add_channel(args.name, url, mode=args.mode, digest_interval_hours=args.digest_hours)
+        storage.add_channel(
+            args.name,
+            url,
+            mode=args.mode,
+            digest_interval_hours=args.digest_hours,
+            kind=kind,
+            secret=secret,
+        )
     except StorageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:
         storage.close()
     cadence = f", every {args.digest_hours}h" if args.mode == "digest" else ""
-    print(f"Added channel {args.name!r} ({args.mode}{cadence}).")
+    print(f"Added channel {args.name!r} ({kind}, {args.mode}{cadence}).")
     print("The URL is encrypted at rest and is never printed or logged.")
+    if kind == CHANNEL_KIND_WEBHOOK:
+        print("So is the signing secret. Keep your own copy: it cannot be read back out.")
+        print("Verifying the signature on your side: docs/webhooks.md")
     print(f"Verify it now with: encore channels test --name {args.name}")
     return 0
 
@@ -1000,7 +1044,7 @@ def _cmd_channels_list(args: argparse.Namespace) -> int:
     for channel in channels:
         state = "enabled" if channel.enabled else "disabled"
         cadence = f" every {channel.digest_interval_hours}h" if channel.mode == "digest" else ""
-        print(f"{channel.name}  [{channel.mode}{cadence}, {state}]")
+        print(f"{channel.name}  [{channel.kind}, {channel.mode}{cadence}, {state}]")
         print(f"    route: {route_lines[channel.name]}")
         if channel.last_success_at is not None:
             print(f"    last delivered: {channel.last_success_at:%Y-%m-%d %H:%M}")

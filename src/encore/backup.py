@@ -365,6 +365,13 @@ CIPHERTEXT_PROBES: tuple[CiphertextProbe, ...] = (
         columns_sql="PRAGMA table_info(channels)",
         select_sql="SELECT url_cipher FROM channels WHERE url_cipher IS NOT NULL LIMIT 1",
     ),
+    CiphertextProbe(
+        table="channels",
+        column="secret_cipher",
+        description="a webhook channel's signing secret",
+        columns_sql="PRAGMA table_info(channels)",
+        select_sql="SELECT secret_cipher FROM channels WHERE secret_cipher IS NOT NULL LIMIT 1",
+    ),
 )
 
 

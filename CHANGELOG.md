@@ -8,6 +8,59 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Signed outbound webhooks, with a versioned event schema.** The README's non-goals
+  drew the line here in terms — "At most: standard outbound webhooks on new-release
+  events so *other* tools can subscribe" — and nothing had built it. Apprise's generic
+  `json://` target already reaches a URL, but what it sends is the *notification*: a
+  title and a body of prose, with no schema, no event type, no MBIDs and no signature.
+  A Home Assistant automation or an n8n flow cannot subscribe to that; it can only
+  scrape English that is free to change in any release, and it has no way to tell an
+  Encore request from anything else that finds the URL. (#56)
+
+  `encore channels add --kind webhook` prompts for a URL and a signing secret, both
+  hidden and both encrypted at rest under the same scheme as the Plex token
+  (ADR-0008). Every release event then POSTs a documented envelope —
+  `schema_version`, `event_type`, `event_id`, `occurred_at`, the artist, the release
+  group and links — with `X-Encore-Event` for routing and
+  `X-Encore-Signature: t=<unix>,v1=<hex>` over `"<t>." + body`. The shape is pinned by
+  `docs/webhook-event-v1.schema.json` and explained, with a verifier, in
+  `docs/webhooks.md`; a test asserts the committed schema and the builder cannot drift
+  apart, and runs the documented verifier against a real signed request so the recipe
+  cannot rot.
+
+  **Three decisions the tests hold, not the prose.** The body is canonical — sorted
+  keys, compact separators, UTF-8 — because a signature over JSON means nothing if the
+  bytes signed can vary with key insertion order; the same envelope built in a
+  different order must produce the same bytes. The timestamp is *inside* the signed
+  material, so a captured request cannot be replayed under a fresh one. And every key
+  is present on every event, with `null` for a value the record does not have: a
+  subscriber that has to tell "no cover art" from "this build stopped sending the key"
+  is reading absence as a value, which is the defect class this project spends most of
+  its tests on. `first_release_date` stays MusicBrainz's partial date verbatim for the
+  same reason padding is refused in the human text.
+
+  **A webhook is an ordinary channel.** Routing, per-artist filters, muting, the
+  bounded backoff and the terminal `failed` state are the delivery engine's and are
+  inherited rather than reimplemented — a muted artist's event creates no webhook
+  delivery at all, and a 500 backs off and then goes terminal with its status recorded
+  in `encore channels list`. One difference, and it is packaging rather than timing: a
+  `digest` artist or a digest-mode channel still *waits* for the window, but when it
+  opens each event goes as its own signed request. A rollup to a machine is one
+  request whose failure would leave several deliveries ambiguous, and this project
+  promises no duplicate deliveries.
+
+  **Two things are refused rather than defaulted.** A webhook channel with no signing
+  secret cannot be created, and a channel row that reaches that state some other way
+  is skipped with a logged reason rather than sent unsigned — an unsigned webhook
+  looks exactly like a working one until somebody else finds the URL. And an Apprise
+  channel may not carry a secret, because that would put a credential on disk for
+  something that never signs anything.
+
+  Schema v14 adds `channels.kind` (defaulting to `apprise`, so an existing database
+  migrates to exactly the behaviour it had) and `channels.secret_cipher`. The new
+  ciphertext column is registered with `encore backup`'s key-pairing probes, which is
+  a gate this repository already had and which caught its own omission.
+
 - **`encore settings simulate` — what a policy change would have cost, before you make it.**
   F10's defaults are quiet by design and opting into EPs or singles is one command, but
   the cost of that command was invisible until a week of alerts had landed. This replays

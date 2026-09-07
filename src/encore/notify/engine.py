@@ -35,13 +35,15 @@ operator's own label, chosen by them, not derived from library content.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import logging
 from dataclasses import dataclass
 
-from encore.models import Delivery, EventView, NotificationChannel
+from encore.models import CHANNEL_KIND_WEBHOOK, Delivery, EventView, NotificationChannel
 from encore.notify.render import RenderedNotification, render_digest, render_event, render_test
 from encore.notify.sender import AppriseSender, DeliveryError, NotificationSender
+from encore.notify.webhook import WebhookSender, channel_test_envelope, event_envelope
 from encore.secretstore import SecretDecryptionError
 from encore.storage import Storage, StorageError
 
@@ -150,6 +152,27 @@ def _send(
     return True
 
 
+def _with_envelopes(
+    channel: NotificationChannel,
+    notification: RenderedNotification,
+    views: list[EventView],
+    machine_identifier: str | None,
+) -> RenderedNotification:
+    """Attach the machine-readable events, for a webhook channel only.
+
+    An Apprise channel gets exactly the object it always got, so nothing about
+    the ~90 existing services changes shape when webhooks exist.
+    """
+    if channel.kind != CHANNEL_KIND_WEBHOOK:
+        return notification
+    return dataclasses.replace(
+        notification,
+        envelopes=tuple(
+            event_envelope(view, machine_identifier=machine_identifier) for view in views
+        ),
+    )
+
+
 def _deliver_instant(
     storage: Storage,
     channel: NotificationChannel,
@@ -170,7 +193,9 @@ def _deliver_instant(
             storage,
             channel,
             url,
-            render_event(view, machine_identifier),
+            _with_envelopes(
+                channel, render_event(view, machine_identifier), [view], machine_identifier
+            ),
             sender,
             [delivery],
             now,
@@ -195,17 +220,56 @@ def _deliver_digest(
     batch = [(d, views[d.event_id]) for d in due if d.event_id in views]
     if not batch:
         return
+    views_in_batch = [view for _delivery, view in batch]
     _send(
         storage,
         channel,
         url,
-        render_digest([view for _delivery, view in batch], machine_identifier),
+        _with_envelopes(
+            channel,
+            render_digest(views_in_batch, machine_identifier),
+            views_in_batch,
+            machine_identifier,
+        ),
         sender,
         [delivery for delivery, _view in batch],
         now,
         report,
         digest=True,
     )
+
+
+def _deliver_rollup(
+    storage: Storage,
+    channel: NotificationChannel,
+    url: str,
+    sender: NotificationSender,
+    due: list[Delivery],
+    views: dict[int, EventView],
+    machine_identifier: str | None,
+    now: dt.datetime,
+    report: DeliveryReport,
+) -> None:
+    """Send the held-back batch once its window opens, in this channel's shape.
+
+    A webhook takes the same *timing* as any other channel -- an artist the
+    operator marked ``digest`` waits for the window here too, because that
+    preference is about when they want to be told, not about who is reading --
+    but not the same *packaging*. A rollup is a kindness to a human inbox; to a
+    machine it is one request whose failure would leave several deliveries
+    ambiguous, and this project promises no duplicate deliveries. So the window
+    gates, and then each event goes as its own signed, individually retriable
+    request. The window is advanced explicitly afterwards, or a webhook channel
+    would never hold anything back again.
+    """
+    if channel.kind != CHANNEL_KIND_WEBHOOK:
+        _deliver_digest(storage, channel, url, sender, due, views, machine_identifier, now, report)
+        return
+    if not _digest_is_due(channel, now):
+        return
+    _deliver_instant(storage, channel, url, sender, due, views, machine_identifier, now, report)
+    if channel.id is not None:
+        storage.record_channel_result(channel.id, success=True, digest_sent_at=now)
 
 
 def _channel_url(storage: Storage, channel: NotificationChannel) -> str | None:
@@ -252,10 +316,54 @@ def _partition_by_priority(
     return force_instant, force_digest, normal
 
 
+def sender_for(
+    storage: Storage,
+    channel: NotificationChannel,
+    override: NotificationSender | None = None,
+) -> NotificationSender | None:
+    """Resolve the sender this channel's payload goes out through, or None.
+
+    ``override`` wins for every channel. That is what a caller injecting a fake
+    sender means, and it is what keeps a test able to drive a webhook channel
+    without a network.
+
+    Returns None, having logged, when a webhook channel has no usable signing
+    secret. Sending it unsigned would be worse than not sending: a subscriber
+    with no signature has no way to tell an Encore event from anything else that
+    can reach the URL, and it would look like the feature working.
+    """
+    if override is not None:
+        return override
+    if channel.kind != CHANNEL_KIND_WEBHOOK:
+        return AppriseSender()
+    try:
+        secret = storage.channel_secret(channel)
+    except SecretDecryptionError:
+        # Worded around the word "secret" on purpose. `.semgrep-rules/encore.yml`'s
+        # no-sensitive-values-in-logs rule matches any argument whose text contains
+        # it, message strings included, and the rule over-matching here is a much
+        # better failure than it under-matching somewhere it counts. Rewording is
+        # cheap; waiving a rule that guards credentials in logs is not.
+        logger.error(
+            "channel %r skipped: its stored signing key cannot be decrypted with "
+            "the key beside the database (docs/adr/0008)",
+            channel.name,
+        )
+        return None
+    if not secret:
+        logger.error(
+            "channel %r skipped: it is a webhook channel with nothing to sign with, "
+            "so every event it sent would be unsigned",
+            channel.name,
+        )
+        return None
+    return WebhookSender(secret)
+
+
 def _run_channel(
     storage: Storage,
     channel: NotificationChannel,
-    sender: NotificationSender,
+    sender: NotificationSender | None,
     machine_identifier: str | None,
     now: dt.datetime,
     report: DeliveryReport,
@@ -270,6 +378,11 @@ def _run_channel(
     if url is None:
         report.channels_skipped += 1
         return []
+    resolved = sender_for(storage, channel, sender)
+    if resolved is None:
+        report.channels_skipped += 1
+        return []
+    sender = resolved
     views = storage.event_views_for([delivery.event_id for delivery in due])
     force_instant, force_digest, normal = _partition_by_priority(storage, due, views)
     # The instant stream sends now regardless of mode: forced-instant
@@ -288,7 +401,7 @@ def _run_channel(
     rollup_batch = (normal if channel.mode == "digest" else []) + force_digest
     if rollup_batch:
         try:
-            _deliver_digest(
+            _deliver_rollup(
                 storage, channel, url, sender, rollup_batch, views, machine_identifier, now, report
             )
         except Exception:
@@ -307,9 +420,12 @@ def run_delivery_cycle(
     Never raises for a per-channel problem: an undecryptable URL, a dead
     service, or an unexpected sender exception is recorded against that
     channel and the cycle continues.
+
+    ``sender`` is no longer resolved once for the whole cycle, because an
+    Apprise channel and a webhook channel put different things on the wire. It
+    is resolved per channel by :func:`sender_for`; passing one here still
+    overrides every channel, which is what an injected fake means.
     """
-    if sender is None:
-        sender = AppriseSender()
     if now is None:
         now = dt.datetime.now(dt.UTC)
     created, muted_skipped = storage.ensure_deliveries(now)
@@ -336,6 +452,11 @@ def run_delivery_cycle(
     return report
 
 
+def _now_iso() -> str:
+    """Return the moment a test fire happened, as the envelope's ``occurred_at``."""
+    return dt.datetime.now(dt.UTC).isoformat().replace("+00:00", "Z")
+
+
 def send_test_notification(
     storage: Storage,
     channel_name: str,
@@ -347,19 +468,36 @@ def send_test_notification(
     know *now* whether the channel works, so the failure propagates instead
     of being queued for retry. The result is still recorded on the channel.
 
+    A webhook channel is test-fired with a real ``channel.test`` envelope, the
+    same shape a release event has with the parts it cannot have set to null --
+    so wiring up an endpoint exercises the subscriber's parser and its signature
+    check, rather than bypassing both with a shorter document.
+
     Raises:
-        StorageError: no channel with that name exists.
+        StorageError: no channel with that name exists, or it is a webhook
+            channel with no usable signing secret.
         DeliveryError: the channel could not be reached.
         SecretDecryptionError: the stored URL cannot be decrypted.
     """
-    if sender is None:
-        sender = AppriseSender()
     channel = storage.get_channel(channel_name)
     if channel is None:
         raise StorageError(f"no notification channel named {channel_name!r}")
+    resolved = sender_for(storage, channel, sender)
+    if resolved is None:
+        raise StorageError(
+            f"channel {channel_name!r} is a webhook channel with no usable signing "
+            "secret, so a test fire would send an unsigned event"
+        )
+    sender = resolved
     url = storage.channel_url(channel)
+    notification = render_test()
+    if channel.kind == CHANNEL_KIND_WEBHOOK:
+        notification = dataclasses.replace(
+            notification,
+            envelopes=(channel_test_envelope(occurred_at=_now_iso()),),
+        )
     try:
-        sender.send(url, render_test())
+        sender.send(url, notification)
     except DeliveryError as exc:
         if channel.id is not None:
             storage.record_channel_result(channel.id, success=False, error=str(exc))
