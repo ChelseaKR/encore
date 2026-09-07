@@ -8,6 +8,40 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Every CodeQL analysis was being deleted with the runner that produced it.**
+  `codeql.yml` carried `upload: never`, with the comment "no GHAS code scanning on this
+  private repo". Both halves of that premise had expired. `encore` is public — ADR 0010's
+  own 2026-08-29 correction records the flip — and code scanning is free on public
+  repositories. Confirmed against the API: `GET /repos/ChelseaKR/encore/code-scanning/alerts`
+  answers `404 "no analysis found"`, which is what an *available* code-scanning setup with
+  nothing uploaded returns; a repository without it answers `403`. So the setting was not a
+  constraint being respected, it was ten weeks of analyses written to a runner and thrown
+  away: no alert, no history, no dismissal record, nothing to compare a new finding against.
+  The second stale claim in the same header — "the account-wide Actions budget block still
+  prevents jobs from starting" — is contradicted by this workflow's own green runs on `main`.
+
+  `upload: always`, with `security-events: write` scoped to the analyze job. **The in-run
+  gate stays**, and that is the half worth stating: a code-scanning alert records a finding,
+  it does not fail a build. Dropping the failing step "because we have alerts now" would
+  make CodeQL advisory and nothing in the repository would say so.
+
+  Four gates in `tests/test_published_claims.py` now hold the posture: a step that reads the
+  SARIF and exits non-zero still exists; uploading carries the permission that makes it
+  possible (and `upload: never` does not carry it); a missing analysis cannot read as a
+  clean one; and `docs/ROADMAP.md` §7's CodeQL row must quote the workflow's own `upload:`
+  value, so the published claim cannot drift from the config again.
+
+  The gating step was hardened while it was open. It globbed `codeql-results/*.sarif`
+  straight into `jq`; with `nullglob` on, an empty match would leave `jq -s` with no file
+  arguments, and `jq -s` with no arguments reads stdin and answers **0** — a missing
+  analysis scored as a clean one. Measured in all three states (no SARIF, empty SARIF, one
+  finding). The glob is now checked before it is used.
+
+  §7's Scorecard row was corrected in the same pass: it read "requires a public repo;
+  deferred to the public/private flip", and that precondition is met. Scorecard is not
+  blocked on visibility any more; it is simply unbuilt, and wiring it involves a
+  publication decision (issue #52) rather than a mechanical one.
+
 - **The release workflow built the GHCR image and threw it away.** `release.yml`'s
   container half ran `docker build -t ghcr.io/chelseakr/encore:${TAG} .`, CVE-scanned
   the result with Trivy, and ended. There was no `docker login`, no `docker push`, and

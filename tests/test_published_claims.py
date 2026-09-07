@@ -437,3 +437,114 @@ def test_only_the_publishing_job_may_write_packages() -> None:
             f"release.yml's {name!r} job also holds a `packages` permission. Only the "
             f"job that pushes the image should be able to write packages."
         )
+
+
+# --- Where CodeQL findings go, and what still stops a merge -------------------
+#
+# `codeql.yml` was written while this repository was private, and carried
+# `upload: never` with the comment "no GHAS on this private repo". The repo is
+# public now (ADR 0010's 2026-08-29 correction records the flip) and code
+# scanning is free on public repositories, so that setting was no longer a
+# constraint being respected — it was every analysis being written to a runner
+# and deleted with it. No alert, no history, no dismissal record.
+#
+# The correction has two halves and only one of them is obvious. Turning upload
+# on is the obvious half. The half worth gating is that upload must not be
+# mistaken for the gate: code scanning *records* a finding, it does not stop a
+# merge. If the in-run failure step is ever dropped "because we have alerts
+# now", CodeQL becomes advisory and nothing says so.
+
+CODEQL_WORKFLOW = WORKFLOWS / "codeql.yml"
+_CODEQL_METRIC = "CodeQL"
+
+
+def _codeql_analyze_job() -> dict[str, object]:
+    job = _jobs(CODEQL_WORKFLOW).get("analyze")
+    assert job is not None, (
+        "codeql.yml has no 'analyze' job. It was not deleted by this gate; if the job "
+        "was renamed, re-point the gate rather than removing it."
+    )
+    return job
+
+
+def _codeql_upload_setting() -> str:
+    """`upload:` as the workflow actually sets it, defaulting the way the action does."""
+    for step in _codeql_analyze_job().get("steps") or []:
+        uses = step.get("uses")
+        if isinstance(uses, str) and "codeql-action/analyze" in uses:
+            with_block = step.get("with") or {}
+            assert isinstance(with_block, dict)
+            # The action's own default is `always`; an omitted key means uploading.
+            return str(with_block.get("upload", "always"))
+    pytest.fail("codeql.yml's analyze job no longer runs codeql-action/analyze")
+
+
+def test_a_codeql_finding_still_fails_the_run() -> None:
+    """An alert in a tab is not a gate.
+
+    Uploading SARIF gives a finding somewhere to live. It does not fail a build,
+    so it cannot replace the step that does. This asserts the failing step is
+    still there and still reads the analysis rather than something else.
+    """
+    steps = _job_run_steps(CODEQL_WORKFLOW, "analyze")
+    gating = [
+        run for run in steps if "codeql-results" in run and "exit 1" in run and "jq" in run
+    ]
+    assert gating, (
+        "codeql.yml no longer has a step that reads the SARIF and exits non-zero on a "
+        "finding. Code scanning alerts do not fail a build, so without this step a "
+        "CodeQL finding is advisory and nothing in the repository says so."
+    )
+
+
+def test_a_missing_analysis_cannot_read_as_a_clean_one() -> None:
+    """Absence rendered as a value, in the one place it would be silent.
+
+    `jq -s` with no file arguments reads stdin and answers 0. The gating step
+    globs for `codeql-results/*.sarif`, so under `nullglob` an analysis that
+    never produced SARIF would score zero findings and pass. Measured.
+    """
+    steps = _job_run_steps(CODEQL_WORKFLOW, "analyze")
+    gating = next(run for run in steps if "codeql-results" in run and "exit 1" in run)
+    if "nullglob" in gating:
+        assert re.search(r'\$\{#\w+\[@\]\}"?\s*-eq\s*0', gating), (
+            "codeql.yml's findings gate enables `nullglob` without checking that the "
+            "SARIF glob matched anything. An empty match leaves `jq -s` with no file "
+            "arguments, and `jq -s` with no arguments reads stdin and answers 0 — a "
+            "missing analysis scored as a clean one."
+        )
+
+
+def test_uploading_sarif_carries_the_permission_that_makes_it_possible() -> None:
+    """`upload:` on without `security-events: write` is a 403 at the end of every run."""
+    upload = _codeql_upload_setting()
+    permissions = _codeql_analyze_job().get("permissions") or {}
+    assert isinstance(permissions, dict)
+    granted = permissions.get("security-events")
+    if upload == "never":
+        assert granted is None, (
+            "codeql.yml grants `security-events: write` while `upload: never` means "
+            "nothing is ever uploaded. A write permission nothing uses is scope for free."
+        )
+    else:
+        assert granted == "write", (
+            f"codeql.yml sets `upload: {upload}` but its analyze job has no "
+            f"`security-events: write`, so every upload fails with a 403."
+        )
+
+
+def test_the_roadmap_says_where_codeql_findings_actually_go() -> None:
+    """§7's CodeQL row, derived from the workflow rather than retyped.
+
+    The row spent weeks saying SARIF upload was disabled because this was a
+    private repository without GHAS. Both halves of that sentence had expired.
+    Requiring the row to quote the workflow's own `upload:` value means the next
+    change to the posture cannot land without the published claim moving with it.
+    """
+    upload = _codeql_upload_setting()
+    status = _roadmap_row(_CODEQL_METRIC)[-1]
+    assert f"`upload: {upload}`" in status, (
+        f"docs/ROADMAP.md §7's CodeQL row does not state the workflow's `upload: {upload}` "
+        f"posture. The row is the published claim about where findings go; it has to name "
+        f"what codeql.yml actually does."
+    )
