@@ -274,3 +274,107 @@ def test_the_roadmap_coverage_target_is_the_floor_the_build_actually_enforces() 
         f"docs/ROADMAP.md §7 publishes a branch-coverage target of {target!r} while the "
         f"build enforces ≥{floor}%. The document restates a number the build owns."
     )
+
+
+# --- The release workflow's claim about itself (issue #50) -------------------
+#
+# The container half of `release.yml` built `ghcr.io/chelseakr/encore:${TAG}`,
+# CVE-scanned it, and ended. There was no `docker login`, no `docker push` and
+# no `packages: write` anywhere in the file, so the image was built on the
+# runner and discarded — and M4's "v0.1.0 published to GHCR" exit criterion was
+# not reachable by running the workflow named for it. The run would go green
+# and publish nothing, which is the worst way for this to fail: a green release
+# reads as a met criterion.
+#
+# Nothing could have caught that, because no gate read the workflow. These do.
+
+RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
+_PUBLISHING_JOB = "build-sign-publish"
+
+
+def _jobs(workflow: Path) -> dict[str, dict[str, object]]:
+    doc = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    jobs = doc.get("jobs") or {}
+    assert isinstance(jobs, dict) and jobs, f"{workflow.name} declares no jobs"
+    return jobs
+
+
+def _job_run_steps(workflow: Path, job_name: str) -> list[str]:
+    """Every `run:` block of one job, in the order the job runs them."""
+    job = _jobs(workflow).get(job_name)
+    assert job is not None, (
+        f"{workflow.name} has no {job_name!r} job. It was not deleted by this gate; "
+        f"if the job was renamed, re-point the gate rather than removing it."
+    )
+    steps = job.get("steps") or []
+    assert isinstance(steps, list)
+    return [step["run"] for step in steps if isinstance(step.get("run"), str)]
+
+
+def _index_of(steps: list[str], needle: str) -> int:
+    for index, run in enumerate(steps):
+        if needle in run:
+            return index
+    pytest.fail(f"no release step runs {needle!r}; steps were: {steps}")
+
+
+def test_the_release_workflow_actually_pushes_the_image_to_ghcr() -> None:
+    """A workflow that builds an image and never pushes it publishes nothing.
+
+    M4's first exit criterion is "v0.1.0 published to GHCR". Building the tag
+    locally and scanning it satisfies neither half of that sentence.
+    """
+    steps = _job_run_steps(RELEASE_WORKFLOW, _PUBLISHING_JOB)
+    joined = "\n".join(steps)
+    assert "docker push" in joined, (
+        "release.yml builds ghcr.io/chelseakr/encore:${TAG} and never pushes it. "
+        "The image is discarded when the runner ends, so the release publishes "
+        "nothing to GHCR while reporting success (issue #50)."
+    )
+    assert "docker login ghcr.io" in joined, (
+        "release.yml pushes to GHCR without authenticating to it."
+    )
+
+
+def test_the_pushed_image_is_the_one_that_was_scanned() -> None:
+    """Ordering, not presence: the CVE gate must precede the publish.
+
+    A push before the Trivy scan would make the scan advisory — the image
+    users pull would already exist by the time the gate had an opinion. A
+    second `docker build` between them would mean the scanned bytes and the
+    published bytes are merely two builds of the same Dockerfile.
+    """
+    steps = _job_run_steps(RELEASE_WORKFLOW, _PUBLISHING_JOB)
+    build = _index_of(steps, "docker build")
+    scan = _index_of(steps, "trivy image")
+    push = _index_of(steps, "docker push")
+    assert build < scan < push, (
+        f"release.yml runs build={build}, scan={scan}, push={push}. The scan has to sit "
+        f"between them or it does not gate what is published."
+    )
+    between = steps[scan + 1 : push + 1]
+    assert not any("docker build" in run for run in between), (
+        "release.yml rebuilds the image between the CVE scan and the push, so the "
+        "scanned image is not the published one."
+    )
+
+
+def test_only_the_publishing_job_may_write_packages() -> None:
+    """`packages: write` is scoped to the one job that needs it."""
+    jobs = _jobs(RELEASE_WORKFLOW)
+    publishing = jobs[_PUBLISHING_JOB]
+    permissions = publishing.get("permissions") or {}
+    assert isinstance(permissions, dict)
+    assert permissions.get("packages") == "write", (
+        "release.yml's publishing job cannot push to GHCR: it has no `packages: write`. "
+        "The push step would fail with a 403 at the very end of a release run."
+    )
+    for name, job in jobs.items():
+        if name == _PUBLISHING_JOB:
+            continue
+        other = job.get("permissions") or {}
+        assert isinstance(other, dict)
+        assert other.get("packages") is None, (
+            f"release.yml's {name!r} job also holds a `packages` permission. Only the "
+            f"job that pushes the image should be able to write packages."
+        )

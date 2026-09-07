@@ -9,6 +9,13 @@
 # of this job re-implemented ruff/mypy/pytest by hand and silently dropped the
 # security stage entirely — fixed here by calling `make verify` instead of
 # reinventing it.)
+#
+# The container half used to build `ghcr.io/chelseakr/encore:${TAG}`, scan it,
+# and then end — no `docker login`, no `docker push`, no `packages: write`.
+# The image was built on the runner and discarded, so M4's "v0.1.0 published to
+# GHCR" exit criterion was not reachable by running this workflow: it would go
+# green and publish nothing. Issue #50. The push now happens after the Trivy
+# gate, on the same local tag, so the published image is the scanned one.
 name: release
 
 on:
@@ -121,13 +128,17 @@ jobs:
         run: make verify
 
   build-sign-publish:
-    name: build · scan · package
+    name: build · scan · publish · package
     runs-on: ubuntu-latest
     needs: [verify-at-tag]
     permissions:
       contents: read
       id-token: write
       attestations: write
+      # Needed to push the release image to GHCR. Scoped to this job only —
+      # `verify-at-tag` and `publish-release` stay read-only, so the token that
+      # can write packages exists solely for the build-scan-push step.
+      packages: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -173,6 +184,36 @@ jobs:
           chmod +x /usr/local/bin/trivy
           trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
             --scanners vuln --skip-version-check "${IMAGE}"
+      - name: Push the scanned image to GHCR (M4 exit criterion, issue #50)
+        # Ordered deliberately after the Trivy gate: the image that is pushed is
+        # the one that was scanned, not a rebuild of it. `docker push` uploads
+        # the local tag, so no second `docker build` can slip between the scan
+        # and the publish. The digest is recorded in the step summary so the
+        # release notes can cite what was actually published rather than what
+        # was intended to be.
+        env:
+          IMAGE: "ghcr.io/chelseakr/encore:${{ needs.verify-at-tag.outputs.release_tag }}"
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${REGISTRY_TOKEN}" \
+            | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          LOCAL_DIGEST="$(docker image inspect --format '{{index .Id}}' "${IMAGE}")"
+          docker push "${IMAGE}"
+          PUSHED_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}")"
+          # The published tag must resolve to the image this job scanned. A tag
+          # that moved between scan and push would mean the CVE gate passed on
+          # something other than what users pull.
+          test "$(docker image inspect --format '{{index .Id}}' "${IMAGE}")" = "${LOCAL_DIGEST}"
+          {
+            echo "### Published container"
+            echo
+            echo '```'
+            echo "image:  ${IMAGE}"
+            echo "digest: ${PUSHED_DIGEST}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          docker logout ghcr.io
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assets

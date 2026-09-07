@@ -6,6 +6,36 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release workflow built the GHCR image and threw it away.** `release.yml`'s
+  container half ran `docker build -t ghcr.io/chelseakr/encore:${TAG} .`, CVE-scanned
+  the result with Trivy, and ended. There was no `docker login`, no `docker push`, and
+  no `packages: write` anywhere in the file — grepped for all three, none present. The
+  image existed only on the runner and was discarded with it.
+
+  M4's first exit criterion is "v0.1.0 published to GHCR" (`docs/ROADMAP.md` §8). That
+  criterion was not reachable by running the workflow named for it: the run would go
+  green, attach the wheel, sdist, SBOM and checksums to a GitHub release, and publish
+  nothing to any registry. A green release run reads as a met criterion, which is the
+  worst available way for this to be wrong. Issue #50.
+
+  The push now happens **after** the Trivy gate, on the same local tag, with no
+  intervening `docker build`, so the image users pull is the image that was scanned
+  rather than a second build of the same Dockerfile. `packages: write` is scoped to
+  that one job; `verify-at-tag` and `publish-release` stay read-only. The published
+  digest is written to the run's step summary so a release can cite what was actually
+  pushed.
+
+  Nothing read `release.yml`, which is why nothing caught this. Three gates in
+  `tests/test_published_claims.py` now do: the workflow pushes and authenticates; the
+  scan sits between the build and the push and nothing rebuilds in between; and only
+  the publishing job may write packages. Four negative controls were run against the
+  workflow file — deleting the push (which restores the original defect exactly),
+  pushing before the scan, rebuilding between scan and push, and dropping
+  `packages: write`. Each was confirmed present in the file, run red, and reverted
+  from a byte copy.
+
 ### Added
 
 - **The doc audit names what it could not see.** `scripts/doc_audit.py` enumerates
