@@ -359,6 +359,35 @@ def test_the_pushed_image_is_the_one_that_was_scanned() -> None:
     )
 
 
+def test_the_publish_step_checks_at_runtime_that_it_is_pushing_the_scanned_image() -> None:
+    """Static ordering is an arrangement; this is the assertion that enforces it.
+
+    The ordering test above reads the workflow file. It cannot see a step that
+    re-tags the image at run time, and it is satisfied by any file whose steps
+    happen to be in the right sequence. So the scan step records the local id of
+    the image it passed, and the push step refuses to publish anything else.
+
+    The check has to *span* the two steps to mean anything. An earlier draft
+    captured the id inside the push step, immediately before `docker push`, and
+    compared it immediately after — but `docker push` does not change a local
+    image id, so that comparison could not fail under any circumstance. It read
+    as provenance and asserted nothing. This gate pins the shape that does work:
+    recorded by the scan, consumed by the push.
+    """
+    steps = _job_run_steps(RELEASE_WORKFLOW, _PUBLISHING_JOB)
+    scan = _index_of(steps, "trivy image")
+    push = _index_of(steps, "docker push")
+    assert "SCANNED_IMAGE_ID=" in steps[scan] and "GITHUB_ENV" in steps[scan], (
+        "release.yml's CVE scan step does not export SCANNED_IMAGE_ID, so the push step "
+        "has nothing to compare against and cannot tell a scanned image from any other."
+    )
+    before_push = steps[push].split("docker push", 1)[0]
+    assert "SCANNED_IMAGE_ID" in before_push, (
+        "release.yml's push step does not check SCANNED_IMAGE_ID before pushing. A check "
+        "made after the push cannot stop an unscanned image from being published."
+    )
+
+
 def test_only_the_publishing_job_may_write_packages() -> None:
     """`packages: write` is scoped to the one job that needs it."""
     jobs = _jobs(RELEASE_WORKFLOW)
