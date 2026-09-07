@@ -381,10 +381,40 @@ def test_the_publish_step_checks_at_runtime_that_it_is_pushing_the_scanned_image
         "release.yml's CVE scan step does not export SCANNED_IMAGE_ID, so the push step "
         "has nothing to compare against and cannot tell a scanned image from any other."
     )
+
+    # Everything the push step does *before* it publishes. A check made after
+    # `docker push` cannot stop an unscanned image from reaching the registry.
     before_push = steps[push].split("docker push", 1)[0]
-    assert "SCANNED_IMAGE_ID" in before_push, (
-        "release.yml's push step does not check SCANNED_IMAGE_ID before pushing. A check "
-        "made after the push cannot stop an unscanned image from being published."
+
+    # Deliberately not `"SCANNED_IMAGE_ID" in before_push`. That weaker form was
+    # written first and a negative control walked straight through it: deleting
+    # the comparison left a `test -n "${SCANNED_IMAGE_ID:-}"` presence guard
+    # behind, the substring still matched, and the suite stayed green over a
+    # step that would happily publish a substituted image.
+    comparisons = [
+        (match.group("lhs"), match.group("rhs"))
+        for match in re.finditer(
+            r'test\s+"\$\{(?P<lhs>\w+)\}"\s*=\s*"\$\{(?P<rhs>\w+)\}"', before_push
+        )
+    ]
+    named = [pair for pair in comparisons if "SCANNED_IMAGE_ID" in pair]
+    assert named, (
+        "release.yml's push step never compares anything against SCANNED_IMAGE_ID before "
+        "`docker push`. Mentioning the variable — a `test -n` guard, a comment — does not "
+        "stop an unscanned image from being published; the id the tag resolves to now has "
+        "to be compared against the id the CVE gate passed."
+    )
+    others = [name for pair in named for name in pair if name != "SCANNED_IMAGE_ID"]
+    assert others, (
+        "release.yml's push step compares SCANNED_IMAGE_ID against itself. That holds for "
+        "every image, scanned or not."
+    )
+    other = others[0]
+    assignment = re.search(rf'{other}="\$\((?P<command>[^)]*)\)"', before_push)
+    assert assignment is not None and "docker image inspect" in assignment.group("command"), (
+        f"release.yml's push step compares SCANNED_IMAGE_ID against {other!r}, which is not "
+        f"read from `docker image inspect` in the same step. The comparison only means "
+        f"something against the id the tag resolves to at push time."
     )
 
 
