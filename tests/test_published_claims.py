@@ -199,3 +199,78 @@ def test_the_pull_request_template_names_the_targets_ci_omits() -> None:
         f"the pull request template does not name {sorted(omitted - named)}, which "
         "`make verify` composes and `ci.yml` never runs"
     )
+
+
+# ---------------------------------------------------------------------------
+# docs/ROADMAP.md §7 (issue #75)
+# ---------------------------------------------------------------------------
+#
+# §7 publishes figures about this repository and nothing derived any of them.
+# The `Branch coverage` row's TARGET column is the half that is mechanical and
+# safe to gate: it restates a floor that already lives, twice, in the build.
+#
+# The same row's "Current status" cell also carries a measured percentage and a
+# test count. Those are NOT gated here, deliberately — re-deriving them changes
+# a number this project publishes about itself, and #75 leaves that call to the
+# maintainer. Adding a gate that goes red on today's committed text would put
+# `main` red to make a point.
+#
+# Written as a TWO-STEP check, which is the shape that survives the merge
+# collapse this repository measured in production (#73): resolve what the
+# sources say *live*, require the sources to agree with each other, and only
+# then require the document to contain it. A one-step "the doc says 85" check
+# is a literal with extra steps.
+
+PYPROJECT = REPO / "pyproject.toml"
+
+#: The `Metric` cell whose `Target` column this gate derives.
+_COVERAGE_METRIC = "Branch coverage"
+
+
+def _declared_coverage_floor() -> int:
+    """Return the branch-coverage floor, resolved from every place the build states it.
+
+    Two sources, and they must agree: `pyproject.toml`'s `fail_under` (what a
+    bare `coverage report` enforces) and `make cov`'s `--cov-fail-under` (what
+    the gate CI runs enforces). A repository whose two floors disagree is one
+    where the published figure is right about one of them and wrong about the
+    other, and no document can be correct about both.
+    """
+    pyproject = re.search(
+        r"^fail_under\s*=\s*(\d+)", PYPROJECT.read_text(encoding="utf-8"), flags=re.MULTILINE
+    )
+    makefile = re.search(r"--cov-fail-under=(\d+)", MAKEFILE.read_text(encoding="utf-8"))
+    assert pyproject is not None, "pyproject.toml no longer declares `fail_under`"
+    assert makefile is not None, "the Makefile no longer passes `--cov-fail-under`"
+    assert pyproject.group(1) == makefile.group(1), (
+        f"pyproject.toml declares a {pyproject.group(1)}% coverage floor and `make cov` "
+        f"enforces {makefile.group(1)}%. Published documentation cannot be correct about both."
+    )
+    return int(pyproject.group(1))
+
+
+def _roadmap_row(metric: str) -> list[str]:
+    """Return the §7 table row for one metric, split into its cells."""
+    for line in ROADMAP.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"| {metric} |"):
+            return [cell.strip() for cell in line.strip().strip("|").split("|")]
+    raise AssertionError(
+        f"docs/ROADMAP.md §7 no longer has a {metric!r} row. It was not deleted by this "
+        f"gate; if the row moved, re-point the gate rather than removing it."
+    )
+
+
+def test_the_roadmap_coverage_target_is_the_floor_the_build_actually_enforces() -> None:
+    """§7's target column, derived from the build rather than retyped.
+
+    Step one resolves the floor from `pyproject.toml` and the Makefile and makes
+    them agree. Step two requires the published row to state that number. Change
+    the floor in either place without touching the roadmap and this goes red.
+    """
+    floor = _declared_coverage_floor()
+    cells = _roadmap_row(_COVERAGE_METRIC)
+    target = cells[2]
+    assert target == f"≥{floor}%", (
+        f"docs/ROADMAP.md §7 publishes a branch-coverage target of {target!r} while the "
+        f"build enforces ≥{floor}%. The document restates a number the build owns."
+    )
