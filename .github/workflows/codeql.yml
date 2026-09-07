@@ -3,10 +3,21 @@
 #
 # Trigger posture (2026-07-14): scan every main update and weekly even during quiet
 # periods. Manual dispatch remains available for incident response and verification.
-# Honesty note (2026-07-17): the account-wide Actions budget block (roadmap B1/U6,
-# ⛔USER) still prevents jobs from starting; this workflow is configured so the
-# control resumes without a code change once billing is restored. No GHAS on this
-# private repo, so findings gate in-run instead of uploading SARIF (see analyze job).
+#
+# Correction, 2026-09-07. Two premises this file was written on have expired.
+# It said "no GHAS on this private repo, so findings gate in-run instead of
+# uploading SARIF" and "the account-wide Actions budget block still prevents jobs
+# from starting". `encore` is public (`gh api repos/ChelseaKR/encore --jq
+# .visibility` reads `public`; ADR 0010's own 2026-08-29 correction records the
+# flip), code scanning is free on public repositories, and this workflow's runs
+# on `main` have been green for days. `upload: never` was therefore throwing away
+# every analysis: the SARIF was written to the runner and deleted with it, so no
+# alert, no history, and no dismissal record survived a run.
+#
+# Uploading does NOT replace the in-run gate below, and the gate is the half that
+# must not be traded away. A code-scanning alert does not fail a build; it appears
+# in a tab. Keeping both means a finding both turns this workflow red and lands
+# somewhere a human can triage it.
 name: codeql
 
 on:
@@ -47,8 +58,13 @@ jobs:
       # CodeQL v4 calls GET /repos/{owner}/{repo}/actions/runs/{run_id}
       # from `analyze`. On a private repo that call is denied without
       # `actions: read` and the step fails with
-      # "Resource not accessible by integration".
+      # "Resource not accessible by integration". Kept after the public flip:
+      # it costs nothing and the workflow should not break if visibility moves.
       actions: read
+      # Required to upload SARIF to code scanning. Without it `analyze` fails the
+      # upload with a 403 rather than silently skipping it, which is the right
+      # way round — a silent skip is how this control was lost in the first place.
+      security-events: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -64,16 +80,35 @@ jobs:
       - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38  # v4.37.4
         with:
           category: "/language:${{ matrix.language }}"
-          # No GHAS code scanning on this private repo — findings are checked in-run below.
-          upload: never
+          # Public repo: code scanning is available, so the analysis is uploaded
+          # and survives the run. `output:` still writes the SARIF locally, which
+          # is what the gate below reads — upload and gate are independent.
+          upload: always
           output: codeql-results
 
-      - name: Fail on findings (no GHAS on this private repo; SARIF checked in-run)
+      - name: Fail on findings — an alert in a tab is not a gate
+        # Deliberately kept after enabling upload. Code scanning records a
+        # finding; it does not stop a merge. This step is the only thing here
+        # that turns a CodeQL result into a red build.
         shell: bash
         run: |
-          count=$(jq -s '[.[] | .runs[]?.results[]?] | length' codeql-results/*.sarif)
+          set -euo pipefail
+          shopt -s nullglob
+          sarif=(codeql-results/*.sarif)
+          # `nullglob` is what makes "no SARIF" representable here at all; without
+          # it the unmatched glob stays literal and `jq` exits 2 with "Could not
+          # open file codeql-results/*.sarif", which is loud but reads as a jq
+          # bug rather than as a missing analysis. Measured. The cost of nullglob
+          # is that an empty array leaves `jq -s` with no file arguments, and
+          # `jq -s` with no arguments reads stdin and answers 0 — a missing
+          # analysis rendered as a clean one. Hence the explicit check.
+          if [ "${#sarif[@]}" -eq 0 ]; then
+            echo "::error::no SARIF was produced in codeql-results/; the analysis did not run" >&2
+            exit 1
+          fi
+          count=$(jq -s '[.[] | .runs[]?.results[]?] | length' "${sarif[@]}")
           echo "CodeQL findings: ${count}"
           if [ "${count:-0}" -gt 0 ]; then
-            jq -r '.runs[]?.results[]? | "\(.ruleId // "rule"): \(.locations[0].physicalLocation.artifactLocation.uri // "?"):\(.locations[0].physicalLocation.region.startLine // 0)"' codeql-results/*.sarif
+            jq -r '.runs[]?.results[]? | "\(.ruleId // "rule"): \(.locations[0].physicalLocation.artifactLocation.uri // "?"):\(.locations[0].physicalLocation.region.startLine // 0)"' "${sarif[@]}"
             exit 1
           fi
