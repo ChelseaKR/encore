@@ -149,6 +149,14 @@ evidence and an empty `correct` column: the sample sheet the U8 validation
 spike needs to turn "≥90% auto-match" into a measured number rather than an
 asserted one.
 
+`encore matches score --in audit.jsonl` reads that sheet back once the `correct`
+column is filled in. It reports auto-match precision over the `auto` rows only,
+counts the rows nobody labelled, and declines to print a rate at all while any
+of them are outstanding — a rate over a partly-labelled sample is a different
+claim from the one M1 exits on. `--partial` scores the labelled rows and says
+so; `--json` emits the same figures with `precision` left null whenever no rate
+was computed.
+
 `docs/how-matching-decides.md` explains the terms and thresholds, and every
 figure on that page is checked against `src/encore/matching/scoring.py`.
 

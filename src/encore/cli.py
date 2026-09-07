@@ -68,6 +68,7 @@ from encore.doctor import exit_code as doctor_exit_code
 from encore.doctor import render_json as doctor_render_json
 from encore.doctor import render_text as doctor_render_text
 from encore.doctor import run_checks as doctor_run_checks
+from encore.matching.audit import format_report, report_payload, score_audit
 from encore.matching.engine import candidates_from_json, run_matching_pass
 from encore.matching.explain import audit_record, explain_match
 from encore.matching.explain import render_json as explain_render_json
@@ -226,6 +227,26 @@ def _build_parser() -> argparse.ArgumentParser:
     matches_audit.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
     matches_audit.add_argument(
         "--out", required=True, metavar="FILE", help="Write one JSON object per line to FILE"
+    )
+
+    matches_score = matches_sub.add_parser(
+        "score",
+        help="Score a filled-in audit sheet: auto-match precision, with its gaps counted (U8)",
+    )
+    matches_score.add_argument(
+        "--in",
+        dest="sheet",
+        required=True,
+        metavar="FILE",
+        help="A JSONL sheet written by `encore matches audit`, with `correct` filled in",
+    )
+    matches_score.add_argument(
+        "--partial",
+        action="store_true",
+        help="Score the labelled rows even when some are unlabelled (states the gap).",
+    )
+    matches_score.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the report as JSON."
     )
 
     matches_resolve = matches_sub.add_parser(
@@ -730,10 +751,36 @@ def _cmd_matches_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_matches_score(args: argparse.Namespace) -> int:
+    """Score a filled-in audit sheet — the read-back half of the U8 spike (#46).
+
+    Exits non-zero when the sheet could not be read whole: a missing file, or
+    any line the scorer refused. A partly-unreadable sheet that exited 0
+    would be a check that cannot fail on the input problem it exists to
+    catch. Whether the *criterion* is met is reported, never enforced —
+    rebalancing or freezing the thresholds is `docs/adr/0006`'s open call.
+    """
+    source = Path(args.sheet)
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"error: cannot read {source}: {exc}", file=sys.stderr)
+        return 1
+    score = score_audit(text)
+    if args.as_json:
+        print(json.dumps(report_payload(score, partial=args.partial), indent=2, sort_keys=True))
+    else:
+        print(format_report(score, partial=args.partial))
+    if score.unreadable:
+        return 1
+    return 0 if score.rows_read else 1
+
+
 _MATCHES_COMMANDS = {
     "list": _cmd_matches_list,
     "explain": _cmd_matches_explain,
     "audit": _cmd_matches_audit,
+    "score": _cmd_matches_score,
     "resolve": _cmd_matches_resolve,
     "skip": _cmd_matches_skip,
 }
