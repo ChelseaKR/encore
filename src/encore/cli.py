@@ -33,6 +33,7 @@ access the operator already has to the data directory.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import getpass
 import json
 import os
@@ -68,12 +69,13 @@ from encore.doctor import exit_code as doctor_exit_code
 from encore.doctor import render_json as doctor_render_json
 from encore.doctor import render_text as doctor_render_text
 from encore.doctor import run_checks as doctor_run_checks
+from encore.matching.audit import format_report, report_payload, score_audit
 from encore.matching.engine import candidates_from_json, run_matching_pass
 from encore.matching.explain import audit_record, explain_match
 from encore.matching.explain import render_json as explain_render_json
 from encore.matching.explain import render_text as explain_render_text
 from encore.matching.mb import MusicBrainzClient
-from encore.models import CHANNEL_MODES, utcnow
+from encore.models import CHANNEL_KIND_WEBHOOK, CHANNEL_KINDS, CHANNEL_MODES, utcnow
 from encore.notify import DeliveryError, run_delivery_cycle, send_test_notification
 from encore.notify.render import render_event
 from encore.plex import PlexMusicClient, PlexWriteAttemptError
@@ -88,6 +90,9 @@ from encore.portable import (
 from encore.recommend.engine import PROVENANCE_LIMIT, refresh_recommendations
 from encore.recommend.lb import ListenBrainzClient
 from encore.secretstore import SecretDecryptionError
+from encore.simulate import diff_reports, run_simulation
+from encore.simulate import format_report as simulate_format_report
+from encore.simulate import report_payload as simulate_report_payload
 from encore.storage import (
     DATA_DIR_ENV,
     DB_FILENAME,
@@ -228,6 +233,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--out", required=True, metavar="FILE", help="Write one JSON object per line to FILE"
     )
 
+    matches_score = matches_sub.add_parser(
+        "score",
+        help="Score a filled-in audit sheet: auto-match precision, with its gaps counted (U8)",
+    )
+    matches_score.add_argument(
+        "--in",
+        dest="sheet",
+        required=True,
+        metavar="FILE",
+        help="A JSONL sheet written by `encore matches audit`, with `correct` filled in",
+    )
+    matches_score.add_argument(
+        "--partial",
+        action="store_true",
+        help="Score the labelled rows even when some are unlabelled (states the gap).",
+    )
+    matches_score.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the report as JSON."
+    )
+
     matches_resolve = matches_sub.add_parser(
         "resolve", help="Confirm an artist's MusicBrainz identity (a review decision or re-match)"
     )
@@ -283,10 +308,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     channel_add = channels_sub.add_parser(
         "add",
-        help="Add a channel; the Apprise URL is prompted or piped on stdin, never passed as a flag",
+        help="Add a channel; the URL is prompted or piped on stdin, never passed as a flag",
     )
     channel_add.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
     channel_add.add_argument("--name", required=True, help="Your label for this channel")
+    channel_add.add_argument(
+        "--kind",
+        choices=CHANNEL_KINDS,
+        default="apprise",
+        help=(
+            "apprise (default): a rendered message to one of Apprise's services. "
+            "webhook: a signed, versioned JSON event POSTed to your own URL so another "
+            "tool can subscribe (see docs/webhooks.md). A webhook channel is also "
+            "prompted for a signing secret."
+        ),
+    )
     channel_add.add_argument("--mode", choices=CHANNEL_MODES, default="instant")
     channel_add.add_argument(
         "--digest-hours",
@@ -463,6 +499,38 @@ def _build_parser() -> argparse.ArgumentParser:
         "('' clears the list; omit to keep the current list)",
     )
 
+    settings_simulate = settings_sub.add_parser(
+        "simulate",
+        help="Replay recorded history through a proposed policy, before changing anything",
+    )
+    settings_simulate.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    settings_simulate.add_argument(
+        "--allow-primary",
+        default=None,
+        metavar="TYPES",
+        help="Proposed primary-type allowlist (omit to replay the policy in force)",
+    )
+    settings_simulate.add_argument(
+        "--allow-secondary",
+        default=None,
+        metavar="TYPES",
+        help="Proposed secondary-type allowlist ('' proposes none)",
+    )
+    settings_simulate.add_argument(
+        "--since",
+        default="90d",
+        metavar="WINDOW",
+        help="How far back to replay, as Nd/Nw (default: 90d)",
+    )
+    settings_simulate.add_argument(
+        "--diff",
+        action="store_true",
+        help="List only the observations whose outcome changes versus the policy in force.",
+    )
+    settings_simulate.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the report as JSON."
+    )
+
     recommend = subparsers.add_parser(
         "recommend", help="Run one recommendation refresh over the watched library (F7)"
     )
@@ -510,8 +578,18 @@ def _read_token() -> str:
 
 
 def _read_channel_url() -> str:
-    """Read an Apprise channel URL — a credential, so hidden like the token."""
-    return _read_hidden("Apprise URL (input hidden): ")
+    """Read a channel URL — a credential, so hidden like the token.
+
+    One prompt for both kinds. Taking the kind as an argument would have been
+    tidier prose and would have broken every caller that already stubs this
+    function, for a word in a prompt.
+    """
+    return _read_hidden("Channel URL (Apprise URL, or webhook URL) (input hidden): ")
+
+
+def _read_channel_secret() -> str:
+    """Read a webhook channel's HMAC signing secret. Also a credential."""
+    return _read_hidden("Webhook signing secret (input hidden): ")
 
 
 def _cmd_plex_configure(args: argparse.Namespace) -> int:
@@ -730,10 +808,36 @@ def _cmd_matches_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_matches_score(args: argparse.Namespace) -> int:
+    """Score a filled-in audit sheet — the read-back half of the U8 spike (#46).
+
+    Exits non-zero when the sheet could not be read whole: a missing file, or
+    any line the scorer refused. A partly-unreadable sheet that exited 0
+    would be a check that cannot fail on the input problem it exists to
+    catch. Whether the *criterion* is met is reported, never enforced —
+    rebalancing or freezing the thresholds is `docs/adr/0006`'s open call.
+    """
+    source = Path(args.sheet)
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"error: cannot read {source}: {exc}", file=sys.stderr)
+        return 1
+    score = score_audit(text)
+    if args.as_json:
+        print(json.dumps(report_payload(score, partial=args.partial), indent=2, sort_keys=True))
+    else:
+        print(format_report(score, partial=args.partial))
+    if score.unreadable:
+        return 1
+    return 0 if score.rows_read else 1
+
+
 _MATCHES_COMMANDS = {
     "list": _cmd_matches_list,
     "explain": _cmd_matches_explain,
     "audit": _cmd_matches_audit,
+    "score": _cmd_matches_score,
     "resolve": _cmd_matches_resolve,
     "skip": _cmd_matches_skip,
 }
@@ -851,25 +955,48 @@ def _cmd_feeds(args: argparse.Namespace) -> int:
 
 def _cmd_channels_add(args: argparse.Namespace) -> int:
     """Add a notification channel (URL prompted or piped, encrypted at rest)."""
+    kind = getattr(args, "kind", "apprise")
     url = _read_channel_url()
     if not url:
-        print("error: empty Apprise URL", file=sys.stderr)
+        print("error: empty channel URL", file=sys.stderr)
         return 2
+    secret: str | None = None
+    if kind == CHANNEL_KIND_WEBHOOK:
+        secret = _read_channel_secret()
+        if not secret:
+            # Refused rather than defaulted. An unsigned webhook looks exactly
+            # like a working one until somebody else finds the URL.
+            print(
+                "error: a webhook channel needs a signing secret; without one every "
+                "event it sends is unsigned",
+                file=sys.stderr,
+            )
+            return 2
     try:
         storage = Storage(args.data_dir)
     except StorageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     try:
-        storage.add_channel(args.name, url, mode=args.mode, digest_interval_hours=args.digest_hours)
+        storage.add_channel(
+            args.name,
+            url,
+            mode=args.mode,
+            digest_interval_hours=args.digest_hours,
+            kind=kind,
+            secret=secret,
+        )
     except StorageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:
         storage.close()
     cadence = f", every {args.digest_hours}h" if args.mode == "digest" else ""
-    print(f"Added channel {args.name!r} ({args.mode}{cadence}).")
+    print(f"Added channel {args.name!r} ({kind}, {args.mode}{cadence}).")
     print("The URL is encrypted at rest and is never printed or logged.")
+    if kind == CHANNEL_KIND_WEBHOOK:
+        print("So is the signing secret. Keep your own copy: it cannot be read back out.")
+        print("Verifying the signature on your side: docs/webhooks.md")
     print(f"Verify it now with: encore channels test --name {args.name}")
     return 0
 
@@ -917,7 +1044,7 @@ def _cmd_channels_list(args: argparse.Namespace) -> int:
     for channel in channels:
         state = "enabled" if channel.enabled else "disabled"
         cadence = f" every {channel.digest_interval_hours}h" if channel.mode == "digest" else ""
-        print(f"{channel.name}  [{channel.mode}{cadence}, {state}]")
+        print(f"{channel.name}  [{channel.kind}, {channel.mode}{cadence}, {state}]")
         print(f"    route: {route_lines[channel.name]}")
         if channel.last_success_at is not None:
             print(f"    last delivered: {channel.last_success_at:%Y-%m-%d %H:%M}")
@@ -1376,9 +1503,92 @@ _ARTISTS_COMMANDS = {
     "settings": _cmd_artists_settings,
 }
 
+
+def _parse_window(raw: str) -> dt.timedelta:
+    """Parse an `Nd`/`Nw` lookback, refusing anything else by name."""
+    text = raw.strip().lower()
+    if text.endswith("d") and text[:-1].isdigit():
+        return dt.timedelta(days=int(text[:-1]))
+    if text.endswith("w") and text[:-1].isdigit():
+        return dt.timedelta(weeks=int(text[:-1]))
+    raise SettingsError(f"--since must look like 30d or 6w, not {raw!r}")
+
+
+def _proposed_defaults(args: argparse.Namespace) -> SettingsOverride | None:
+    """Build the proposed global layer, or ``None`` to replay what is in force.
+
+    An omitted flag inherits the stored value rather than resetting it, so
+    ``--allow-secondary live`` alone proposes "today's primaries, plus live"
+    and not "albums only, plus live". Proposing something the operator did not
+    say would make the simulation answer a different question from the one
+    asked.
+    """
+    if args.allow_primary is None and args.allow_secondary is None:
+        return None
+    stored = Storage(args.data_dir)
+    try:
+        current = stored.get_watch_defaults()
+    finally:
+        stored.close()
+    primary = (
+        current.allow_primary
+        if args.allow_primary is None
+        else parse_primary_types(args.allow_primary)
+    )
+    secondary = (
+        current.allow_secondary
+        if args.allow_secondary is None
+        else (parse_secondary_types(args.allow_secondary) if args.allow_secondary.strip() else ())
+    )
+    return SettingsOverride(allow_primary=primary, allow_secondary=secondary)
+
+
+def _cmd_settings_simulate(args: argparse.Namespace) -> int:
+    """Replay recorded history through a proposed policy (#58).
+
+    Offline and deterministic: the corpus is what encore already recorded, and
+    nothing here opens a socket. Exits 0 on an empty window — "nothing to
+    simulate" is an answer, not a failure.
+    """
+    try:
+        window = _parse_window(args.since)
+        proposed = _proposed_defaults(args)
+    except (SettingsError, StorageError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    end = utcnow()
+    start = end - window
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        report = run_simulation(
+            storage, window_start=start, window_end=end, proposed_defaults=proposed
+        )
+        changes = None
+        if args.diff:
+            in_force = run_simulation(storage, window_start=start, window_end=end)
+            changes = diff_reports(in_force, report)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    if args.as_json:
+        print(
+            json.dumps(simulate_report_payload(report, changes=changes), indent=2, sort_keys=True)
+        )
+    else:
+        print(simulate_format_report(report, changes=changes))
+    return 0
+
+
 _SETTINGS_COMMANDS = {
     "show": _cmd_settings_show,
     "default-types": _cmd_settings_default_types,
+    "simulate": _cmd_settings_simulate,
 }
 
 _RECS_COMMANDS = {

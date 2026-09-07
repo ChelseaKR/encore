@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ChelseaKR/encore/main/docs/webhook-event-v1.schema.json",
+  "title": "Encore webhook event, schema_version 1",
+  "description": "The JSON body Encore POSTs to a webhook channel. Every key is present on every event; a value the record does not have is null rather than absent, so a consumer can tell 'no cover art' from 'this build stopped sending the key'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_type",
+    "event_id",
+    "occurred_at",
+    "artist",
+    "release_group",
+    "links"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Within one version every key is append only. Removing, renaming, or changing what a key holds moves this number."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["release.new", "release.upcoming", "release.date_changed", "channel.test"],
+      "description": "Also sent as the X-Encore-Event header, so a consumer can route without parsing the body."
+    },
+    "event_id": {
+      "type": ["integer", "null"],
+      "description": "Stable identifier for this release event. Deduplicate retries on it. Null only for channel.test, which is not a recorded event."
+    },
+    "occurred_at": {
+      "type": "string",
+      "description": "RFC 3339 / ISO 8601 in UTC, ending in Z. When Encore recorded the event, not when the release came out."
+    },
+    "artist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mbid"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "mbid": { "type": ["string", "null"], "description": "MusicBrainz artist identifier." }
+      }
+    },
+    "release_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "mbid", "primary_type", "secondary_types", "first_release_date"],
+      "properties": {
+        "title": { "type": ["string", "null"] },
+        "mbid": { "type": ["string", "null"], "description": "MusicBrainz release-group identifier." },
+        "primary_type": {
+          "type": ["string", "null"],
+          "description": "MusicBrainz primary type (Album, Single, EP, ...). Null when MusicBrainz publishes none."
+        },
+        "secondary_types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "MusicBrainz secondary types (Live, Compilation, ...). An empty array means none, and is not the same as the key being absent."
+        },
+        "first_release_date": {
+          "type": ["string", "null"],
+          "description": "MusicBrainz's partial date verbatim: 2027, 2027-03, or 2027-03-14. Never padded, because padding invents precision MusicBrainz did not publish."
+        }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cover_art", "plex"],
+      "properties": {
+        "cover_art": {
+          "type": ["string", "null"],
+          "description": "Cover Art Archive front-cover URL for the release group. Deterministic, and 404s when the archive holds no art: Encore does not verify it in advance, because that would cost a request per event."
+        },
+        "plex": {
+          "type": ["string", "null"],
+          "description": "Deep link to the artist in the operator's Plex. Null until a Plex sync has learned the server's machine identifier, and null for an artist with no Plex row: a link built from a guess goes nowhere."
+        }
+      }
+    }
+  }
+}

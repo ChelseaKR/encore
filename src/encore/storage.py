@@ -43,6 +43,9 @@ from encore.channelroute import (
     parse_route_json,
 )
 from encore.models import (
+    CHANNEL_KIND_APPRISE,
+    CHANNEL_KIND_WEBHOOK,
+    CHANNEL_KINDS,
     CHANNEL_MODES,
     DELIVERY_STATUSES,
     MATCH_STATUSES,
@@ -259,6 +262,29 @@ def _migration_0013_channel_routes(connection: Connection) -> None:
         connection.exec_driver_sql("ALTER TABLE channels ADD COLUMN route_json TEXT")
 
 
+def _migration_0014_webhook_channels(connection: Connection) -> None:
+    """v14: add ``channels.kind`` and ``channels.secret_cipher`` (issue #56).
+
+    ``kind`` defaults to ``'apprise'``, so an existing database migrates to
+    exactly the behaviour it already had: every channel it holds was an Apprise
+    destination and stays one. ``secret_cipher`` is NULL for those, because only
+    a webhook channel signs anything.
+
+    The default is written into the ALTER rather than left to the model, since
+    the rows already on disk are updated by SQLite when the column is added and
+    a NULL ``kind`` would make the sender choice unanswerable for them.
+    Guarded: no-op on fresh, ALTER on an existing table.
+    """
+    SQLModel.metadata.create_all(connection)
+    columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(channels)")}
+    if "kind" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE channels ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'apprise'"
+        )
+    if "secret_cipher" not in columns:
+        connection.exec_driver_sql("ALTER TABLE channels ADD COLUMN secret_cipher BLOB")
+
+
 # Ordered forward migrations; index+1 is the schema version they produce.
 # Append-only: released migrations are never edited, only extended.
 MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
@@ -275,6 +301,7 @@ MIGRATIONS: tuple[Callable[[Connection], None], ...] = (
     _migration_0011_scheduler_heartbeats,
     _migration_0012_match_evidence,
     _migration_0013_channel_routes,
+    _migration_0014_webhook_channels,
 )
 
 
@@ -618,6 +645,27 @@ class Storage:
             statement = select(ReleaseGroup).where(ReleaseGroup.artist_mbid == artist_mbid)
             return list(session.exec(statement).all())
 
+    def all_release_groups(self) -> list[ReleaseGroup]:
+        """Every recorded release-group, across every watched identity.
+
+        The whole corpus rather than one artist's slice, because
+        `encore.simulate` replays groups (not events) and needs each artist's
+        *earliest* row to tell a baseline poll apart from a later one.
+        """
+        with self.session() as session:
+            return list(session.exec(select(ReleaseGroup)).all())
+
+    def owners_by_mbid(self, artist_mbids: Sequence[str]) -> dict[str, list[Artist]]:
+        """Live Plex rows owning each identity; an unowned MBID maps to ``[]``.
+
+        Public because the simulator needs the same library keys, artist keys
+        and source that `ensure_deliveries` routes on. Total over the input for
+        the same reason it is there: an F8-promoted identity deliberately has no
+        Plex row, and that must be distinguishable from a failed lookup.
+        """
+        with self.session() as session:
+            return self._owners_by_mbid(session, set(artist_mbids))
+
     def has_release_groups(self, artist_mbid: str) -> bool:
         """Whether any release-group row exists for this artist (baseline test)."""
         with self.session() as session:
@@ -722,20 +770,41 @@ class Storage:
         url: str,
         mode: str = "instant",
         digest_interval_hours: float = 24.0,
+        kind: str = CHANNEL_KIND_APPRISE,
+        secret: str | None = None,
     ) -> NotificationChannel:
-        """Create a channel; the Apprise URL is encrypted at rest (docs/adr/0008).
+        """Create a channel; the URL (and a webhook secret) are encrypted at rest.
+
+        A webhook channel must carry a signing secret and an Apprise channel must
+        not. Both are refused rather than defaulted: a webhook with no secret
+        would emit unsigned events that a consumer has no way to trust, and
+        storing a secret against a channel that never signs anything would put a
+        credential on disk for nothing.
 
         Raises:
-            StorageError: ``mode`` is not one of `encore.models.CHANNEL_MODES`,
-                ``digest_interval_hours`` is not positive, or ``name`` is taken.
+            StorageError: ``kind`` is not one of `encore.models.CHANNEL_KINDS`,
+                ``mode`` is not one of `encore.models.CHANNEL_MODES`,
+                ``digest_interval_hours`` is not positive, the secret is missing
+                or present when it should not be, or ``name`` is taken.
         """
+        if kind not in CHANNEL_KINDS:
+            raise StorageError(f"invalid channel kind {kind!r}; expected {CHANNEL_KINDS}")
         if mode not in CHANNEL_MODES:
             raise StorageError(f"invalid channel mode {mode!r}; expected {CHANNEL_MODES}")
         if digest_interval_hours <= 0:
             raise StorageError("digest interval must be a positive number of hours")
+        if kind == CHANNEL_KIND_WEBHOOK and not secret:
+            raise StorageError(
+                "a webhook channel needs a signing secret; without one every event it "
+                "sends is unsigned and a subscriber has no way to tell it came from here"
+            )
+        if kind != CHANNEL_KIND_WEBHOOK and secret:
+            raise StorageError(f"a {kind} channel does not sign anything, so it takes no secret")
         row = NotificationChannel(
             name=name,
             url_cipher=self.cipher.encrypt(url),
+            kind=kind,
+            secret_cipher=self.cipher.encrypt(secret) if secret else None,
             mode=mode,
             digest_interval_hours=digest_interval_hours,
         )
@@ -773,6 +842,21 @@ class Storage:
             SecretDecryptionError: the key file does not match the ciphertext.
         """
         return self.cipher.decrypt(channel.url_cipher)
+
+    def channel_secret(self, channel: NotificationChannel) -> str | None:
+        """Decrypt a webhook channel's signing secret, or ``None`` if it has none.
+
+        None means the channel is not a webhook (or predates the column). It is
+        never a usable empty secret: signing with ``""`` would produce a
+        verifiable-looking header that anyone could forge, which is worse than
+        not signing.
+
+        Raises:
+            SecretDecryptionError: the key file does not match the ciphertext.
+        """
+        if channel.secret_cipher is None:
+            return None
+        return self.cipher.decrypt(channel.secret_cipher)
 
     def set_channel_enabled(self, name: str, enabled: bool) -> NotificationChannel:
         """Enable or disable a channel without deleting its history.
@@ -1381,7 +1465,9 @@ class Storage:
         )
 
     def effective_watch_settings_for_mbids(
-        self, artist_mbids: Sequence[str]
+        self,
+        artist_mbids: Sequence[str],
+        defaults: SettingsOverride | None = None,
     ) -> dict[str, ArtistWatchSettings]:
         """Resolve effective settings for many artist MBIDs in one pass.
 
@@ -1399,12 +1485,25 @@ class Storage:
         restriction", so the F10 albums-only default was silently skipped for
         exactly the artists a user discovered rather than owned (issue #33).
         The mapping is therefore total over ``artist_mbids``.
+
+        Args:
+            artist_mbids: the identities to resolve.
+            defaults: a proposed global layer to resolve against instead of the
+                stored one. ``None`` reads the stored defaults, which is every
+                caller but the simulator.
         """
         today = utcnow().date()
         unique_ids = list(dict.fromkeys(artist_mbids))
         if not unique_ids:
             return {}
-        defaults = self.get_watch_defaults()
+        # `defaults` is a *proposed* global layer, for `encore settings simulate`
+        # (#58): the caller asks what that layer would have done. Nothing else
+        # passes it, so the stored defaults are still what every other caller
+        # resolves against. Every other layering rule is untouched, which is the
+        # point -- a simulation that resolved policy differently from delivery
+        # would be measuring its own reimplementation.
+        if defaults is None:
+            defaults = self.get_watch_defaults()
         with self.session() as session:
             matches = session.exec(
                 select(ArtistMatch).where(

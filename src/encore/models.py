@@ -17,6 +17,9 @@ from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 __all__ = [
+    "CHANNEL_KINDS",
+    "CHANNEL_KIND_APPRISE",
+    "CHANNEL_KIND_WEBHOOK",
     "CHANNEL_MODES",
     "DELIVERY_STATUSES",
     "MATCH_STATUSES",
@@ -214,6 +217,17 @@ class ReleaseEvent(SQLModel, table=True):
 # message per ``digest_interval_hours`` (F4's two delivery cadences).
 CHANNEL_MODES = ("instant", "digest")
 
+# Valid NotificationChannel.kind values. "apprise" is the original and the
+# default: a rendered human message handed to one of Apprise's ~90 services.
+# "webhook" is the machine-readable half of the same egress boundary (issue
+# #56) -- a signed, versioned JSON event POSTed to the operator's own URL, so
+# another tool can subscribe to releases without scraping prose meant for a
+# person. Both go through the same delivery engine, the same routing and the
+# same backoff; they differ only in what the sender puts on the wire.
+CHANNEL_KIND_APPRISE = "apprise"
+CHANNEL_KIND_WEBHOOK = "webhook"
+CHANNEL_KINDS = (CHANNEL_KIND_APPRISE, CHANNEL_KIND_WEBHOOK)
+
 
 class NotificationChannel(SQLModel, table=True):
     """One Apprise destination (ntfy, Discord, email, generic webhook…) — F4.
@@ -233,6 +247,16 @@ class NotificationChannel(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(unique=True, index=True)
     url_cipher: bytes
+    # Which sender puts this channel's payload on the wire (issue #56). Defaults
+    # to "apprise", so a database written before webhooks existed migrates to
+    # exactly the behaviour it already had.
+    kind: str = Field(default=CHANNEL_KIND_APPRISE, index=True)
+    # The webhook channel's HMAC shared secret, Fernet-encrypted under the same
+    # scheme as the URL and the Plex token (docs/adr/0008). NULL for every
+    # Apprise channel. A signing secret is a credential in exactly the way the
+    # URL is, so it gets the same handling: encrypted at rest, decrypted at the
+    # moment of use, never logged and never printed.
+    secret_cipher: bytes | None = Field(default=None)
     mode: str = Field(default="instant", index=True)
     enabled: bool = Field(default=True, index=True)
     digest_interval_hours: float = Field(default=24.0)

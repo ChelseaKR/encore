@@ -38,6 +38,150 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Signed outbound webhooks, with a versioned event schema.** The README's non-goals
+  drew the line here in terms — "At most: standard outbound webhooks on new-release
+  events so *other* tools can subscribe" — and nothing had built it. Apprise's generic
+  `json://` target already reaches a URL, but what it sends is the *notification*: a
+  title and a body of prose, with no schema, no event type, no MBIDs and no signature.
+  A Home Assistant automation or an n8n flow cannot subscribe to that; it can only
+  scrape English that is free to change in any release, and it has no way to tell an
+  Encore request from anything else that finds the URL. (#56)
+
+  `encore channels add --kind webhook` prompts for a URL and a signing secret, both
+  hidden and both encrypted at rest under the same scheme as the Plex token
+  (ADR-0008). Every release event then POSTs a documented envelope —
+  `schema_version`, `event_type`, `event_id`, `occurred_at`, the artist, the release
+  group and links — with `X-Encore-Event` for routing and
+  `X-Encore-Signature: t=<unix>,v1=<hex>` over `"<t>." + body`. The shape is pinned by
+  `docs/webhook-event-v1.schema.json` and explained, with a verifier, in
+  `docs/webhooks.md`; a test asserts the committed schema and the builder cannot drift
+  apart, and runs the documented verifier against a real signed request so the recipe
+  cannot rot.
+
+  **Three decisions the tests hold, not the prose.** The body is canonical — sorted
+  keys, compact separators, UTF-8 — because a signature over JSON means nothing if the
+  bytes signed can vary with key insertion order; the same envelope built in a
+  different order must produce the same bytes. The timestamp is *inside* the signed
+  material, so a captured request cannot be replayed under a fresh one. And every key
+  is present on every event, with `null` for a value the record does not have: a
+  subscriber that has to tell "no cover art" from "this build stopped sending the key"
+  is reading absence as a value, which is the defect class this project spends most of
+  its tests on. `first_release_date` stays MusicBrainz's partial date verbatim for the
+  same reason padding is refused in the human text.
+
+  **A webhook is an ordinary channel.** Routing, per-artist filters, muting, the
+  bounded backoff and the terminal `failed` state are the delivery engine's and are
+  inherited rather than reimplemented — a muted artist's event creates no webhook
+  delivery at all, and a 500 backs off and then goes terminal with its status recorded
+  in `encore channels list`. One difference, and it is packaging rather than timing: a
+  `digest` artist or a digest-mode channel still *waits* for the window, but when it
+  opens each event goes as its own signed request. A rollup to a machine is one
+  request whose failure would leave several deliveries ambiguous, and this project
+  promises no duplicate deliveries.
+
+  **Two things are refused rather than defaulted.** A webhook channel with no signing
+  secret cannot be created, and a channel row that reaches that state some other way
+  is skipped with a logged reason rather than sent unsigned — an unsigned webhook
+  looks exactly like a working one until somebody else finds the URL. And an Apprise
+  channel may not carry a secret, because that would put a credential on disk for
+  something that never signs anything.
+
+  Schema v14 adds `channels.kind` (defaulting to `apprise`, so an existing database
+  migrates to exactly the behaviour it had) and `channels.secret_cipher`. The new
+  ciphertext column is registered with `encore backup`'s key-pairing probes, which is
+  a gate this repository already had and which caught its own omission.
+
+- **`encore settings simulate` — what a policy change would have cost, before you make it.**
+  F10's defaults are quiet by design and opting into EPs or singles is one command, but
+  the cost of that command was invisible until a week of alerts had landed. This replays
+  what encore already recorded through a proposed policy and prints what would have been
+  delivered, per channel, by artist, by release type and by day, with the ten noisiest
+  artists named. `--diff` lists only the observations whose outcome moves; `--json` emits
+  the same figures. Offline, deterministic, socket-guarded by test. (#58)
+
+  **It replays release-groups, not the event log, and that distinction is the feature.**
+  Type filters gate event *creation*, not delivery (`src/encore/watch/engine.py`): a group
+  whose type is not opted in is recorded and raises no event at all. So under an
+  albums-only policy no single ever became an event, and the obvious implementation —
+  replaying `events` — would report "widening to singles: +0" and be wrong by exactly the
+  amount the operator asked about. An absence, rendered as a measurement, in answer to the
+  one question the command exists for. The corpus is therefore `release_groups`, which the
+  diff engine records exactly and on purpose so that "a later opt-in starts from truth";
+  the event log is still read, as ground truth for what did happen.
+  `test_widening_to_singles_finds_the_singles_that_never_became_events` fails outright
+  against an event-log implementation.
+
+  **The blind spot is named rather than papered over.** An artist's first poll is silent
+  under every policy (ADR-0011), so a back catalogue first seen inside the simulated window
+  cannot be replayed at all. Rather than guess at a tolerance for "which rows belong to the
+  baseline poll", the test is exact: an artist whose earliest recorded group falls inside
+  the window was baselined inside it, and its observations are excluded and counted, with
+  the reason printed. Days on which nothing at all was recorded are counted too — a missed
+  watch run is not a quiet day — as are observations the reconstruction cannot explain
+  (allowed by the policy in force, post-baseline, and yet carrying no event).
+
+  **The simulation shares the delivery path's own predicates rather than restating them**,
+  in the same order: type filter, then muting, then channel age, then routing, then the
+  priority/cadence split. A release excluded by type is reported as filtered even when its
+  artist is muted, because muting never got a say about it — telling the operator that
+  un-muting would bring it back would be false. The anchor test builds its fixture through
+  `watch_artist` and `Storage.ensure_deliveries` and requires the replay of today's policy
+  to reproduce the delivery rows that path actually created.
+
+  Six negative controls, each confirmed present in the source before running and reverted
+  byte-identically after: replaying the event log instead of the group rows, treating a
+  baselined-in-window artist as ordinary, checking muting before the type filter, dropping
+  a zero-delivery channel from the table, ignoring the channel-age rule, and hiding the
+  quiet-day count. Two of them initially failed to go red — the tests did not cover those
+  behaviours — which is what negative controls are for; the missing tests were added and
+  all six now fail as they should.
+
+  `Storage.effective_watch_settings_for_mbids` gains an optional `defaults` argument so the
+  simulator can resolve a *proposed* global layer through the same code delivery resolves
+  the stored one. No other caller passes it, and every layering rule is unchanged: a
+  simulation that resolved policy differently from delivery would be measuring its own
+  reimplementation.
+
+- **`encore matches score` — the audit sheet, read back.** `encore matches audit`
+  writes the sample sheet the U8 validation spike needs (issue #46) and nothing
+  read it. The only path from that sheet to M1's "≥90% auto-match on the reference
+  library" ran through arithmetic done by hand, and a published figure nobody can
+  re-derive from the artifact is exactly the kind of number this repository has had
+  to withdraw elsewhere. `encore matches score --in audit.jsonl` reads the sheet,
+  tallies it by decision status, and reports the rate.
+
+  It is strict in three specific places, each of which is a way to publish an
+  absence as a measurement. **An unlabelled row is not a data point:** `correct:
+  null` means nobody has looked yet, so it enters neither the numerator nor the
+  denominator, and the report states how many there were rather than quietly
+  shrinking the sample. **A rate over a partly-labelled sheet is not printed at
+  all** unless `--partial` asks for it by name, and then it carries its own gap
+  and an explicit note that it is not the U8 figure. **A label that is not a
+  boolean is refused by line number, not coerced** — `"correct": "yes"` is truthy
+  in Python and would have scored as a correct match; so would `1`, and `""` would
+  have scored as a wrong one. Unparseable lines, non-objects and unknown decision
+  statuses are refused the same way and counted, and any refusal exits non-zero,
+  because a scorer that reads three quarters of a sheet and exits 0 is a check
+  that cannot fail on the input problem it exists to catch.
+
+  **Precision and coverage are reported as two figures, not one.** ADR-0006 and
+  `docs/ROADMAP.md` §7 both ask for auto-match *precision* — of the decisions the
+  matcher made without asking, how many were right — and only `auto` rows enter
+  that denominator; folding in `manual`, `pending` or `skipped` rows would move
+  the number without measuring anything. "How many artists auto-matched at all"
+  is a genuinely useful second figure and is labelled as coverage.
+
+  Six negative controls were run against the guards rather than only asserted:
+  coercing a non-boolean label by truthiness, counting unlabelled rows in the
+  denominator, publishing a rate over an incomplete sheet, letting an empty tally
+  claim to be complete, summing every status into the auto denominator, and
+  accepting an unknown status. Each was applied to the source, confirmed present
+  in the file, run red, and restored byte-identically.
+
+  Nothing here decides whether the criterion is met. The library, the labelling
+  pass, and the call that follows it — rebalance the threshold or freeze it —
+  stay with the maintainer, per `docs/adr/0006`.
+
 - **The doc audit names what it could not see.** `scripts/doc_audit.py` enumerates
   git-tracked files on purpose (`9f8ba81`: a filesystem walk let an untracked scratch
   note move the counts, so `--check` disagreed with itself across two checkouts of the

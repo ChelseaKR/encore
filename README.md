@@ -59,6 +59,9 @@ recommendable in public without a legality asterisk.
 - **Stays quiet by default**: albums-only until you opt in to EPs, singles, live
   recordings, or compilations — globally or per artist (`encore artists settings`),
   with muting (forever or until a date) and per-artist priority tiers.
+  `encore settings simulate --allow-primary album,ep --since 90d` replays your own
+  recorded history through a proposed policy and prints what it would have delivered,
+  per channel and per artist, before you change anything.
 - **Recommends** similar artists via ListenBrainz labs, weighted by your actual
   listening, with visible provenance ("similar to X, Y you already own") and one-command
   dismiss/promote (`encore recommend`, `encore recommendations`). Promoting a candidate
@@ -70,6 +73,12 @@ recommendable in public without a legality asterisk.
 - **Never downloads music.** No Soulseek, no indexers, no YouTube ripping, no Lidarr
   coupling in-product. At most: standard outbound webhooks on new-release events so
   *other* tools can subscribe — Encore's responsibility ends at the notification.
+  That "at most" is now built: `encore channels add --kind webhook` POSTs a signed,
+  versioned JSON event to a URL you control, so a Home Assistant automation or a
+  small script can subscribe without scraping prose written for a person. The
+  payload carries the artist, the release group and links, and nothing else about
+  your library — no Plex token, no internal identifiers, and nothing about where to
+  get anything. See [docs/webhooks.md](docs/webhooks.md).
 - **Not a media server or player.** No streaming, no in-app playlists — deep-link out
   to Plex/Plexamp instead.
 - **Not a cloud service.** Self-hosted only. No accounts, no telemetry, no
@@ -118,6 +127,8 @@ encore/
 │   │                          #   types, muting, per-artist and global priority
 │   ├── channelroute.py        # F10's channel-side half: which slice of events
 │   │                          #   each channel subscribes to (#65)
+│   ├── simulate.py            # replay recorded release-groups through a proposed
+│   │                          #   policy: what it would have delivered (#58)
 │   └── recommend/             # F7/F8 recommendations: ListenBrainz labs
 │                              #   similar-artists with provenance, promote/dismiss
 ├── docs/                       # ADRs, ROADMAP, RESPONSIBLE-TECH-AUDITS, I18N, audits/
@@ -148,6 +159,14 @@ rather than printing a table of zeroes that look like measurements.
 evidence and an empty `correct` column: the sample sheet the U8 validation
 spike needs to turn "≥90% auto-match" into a measured number rather than an
 asserted one.
+
+`encore matches score --in audit.jsonl` reads that sheet back once the `correct`
+column is filled in. It reports auto-match precision over the `auto` rows only,
+counts the rows nobody labelled, and declines to print a rate at all while any
+of them are outstanding — a rate over a partly-labelled sample is a different
+claim from the one M1 exits on. `--partial` scores the labelled rows and says
+so; `--json` emits the same figures with `precision` left null whenever no rate
+was computed.
 
 `docs/how-matching-decides.md` explains the terms and thresholds, and every
 figure on that page is checked against `src/encore/matching/scoring.py`.

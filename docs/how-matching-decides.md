@@ -89,4 +89,8 @@ these numbers are a defensible starting point and not a measured optimum.
 
 `encore matches audit --out audit.jsonl` writes every current decision with
 its evidence and an empty `correct` column, which is the sample sheet that
-spike needs.
+spike needs. `encore matches score --in audit.jsonl` reads it back once the
+column is filled in and computes the rate, so the figure that eventually
+freezes these thresholds is reproducible from the sheet rather than from
+somebody's arithmetic. It scores `auto` rows only, and it does not print a
+rate while any of them are unlabelled.
