@@ -25,6 +25,21 @@ authority on what was decided; the recomputed numbers are labelled as
 recomputed at today's threshold, because the threshold in force at match time
 was not stored and this module will not pretend otherwise.
 
+**And what could not be read is reported as unread — which is a third state,
+not a second.** The rule above was broken here for a while, in its own
+implementation: a `candidates_json` that failed to parse returned the same
+empty list an unmatched artist produces, so a corrupt evidence column
+explained as `evidence: none`, printed "this artist has never been matched",
+and told the operator "No candidate was stored, so the decision cannot be
+attributed to one". Every one of those is a statement about the matcher, made
+about a row where the matcher had run and written its evidence. Absent,
+unreadable and present are now distinguished (`EVIDENCE_NONE` /
+`EVIDENCE_UNREADABLE`), and a stored empty list stays *absent* — `[]` is the
+recorded finding that MusicBrainz returned nothing, not a failure to read one.
+`audit_record` carries the same distinction into the sample sheet: an
+unreadable row's `candidate_count` is `null`, because a `0` there would enter
+M1's precision measurement as something a reviewer had counted.
+
 Nothing here opens a socket. Explain never re-queries MusicBrainz: it is a
 reading of what is already on disk, which is what makes it usable on the
 evidence as it stood rather than as upstream has since revised it.
@@ -59,6 +74,12 @@ __all__ = [
 EVIDENCE_COMPLETE = "complete"  # hints and candidate inputs both present
 EVIDENCE_CANDIDATES_ONLY = "candidates-only"  # scores recorded, hints were not
 EVIDENCE_NONE = "none"  # nothing stored: never matched
+# Something WAS stored and could not be read back. Kept separate from
+# `EVIDENCE_NONE` on purpose: "this artist has never been matched" and "this
+# artist was matched and the evidence column is corrupt" are different facts
+# about the row, and only one of them is a statement about the matcher. Both
+# used to render as the first one.
+EVIDENCE_UNREADABLE = "unreadable"
 
 # Appended when the gap had to be computed from stored, clamped scores rather
 # than the raw ones `decide` ranked on. Saying so is the difference between a
@@ -135,38 +156,57 @@ class Explanation:
         }
 
 
-def _stored_candidates(row: ArtistMatch) -> list[dict[str, Any]]:
+def _stored_candidates(row: ArtistMatch) -> tuple[list[dict[str, Any]], str | None]:
+    """Return the stored candidates and, when the column is unreadable, why.
+
+    Three states, not two. An empty column means no candidates were recorded,
+    which is a real and common answer. A column that holds something this
+    module cannot read is not that answer — it is the absence of an answer, and
+    collapsing it into an empty list published a failed read as "never
+    matched", in a module whose own docstring promises the opposite.
+
+    A stored empty list stays in the first state: `[]` is a recorded finding
+    (MusicBrainz returned nothing), not a failure to read one.
+    """
     if not row.candidates_json:
-        return []
+        return [], None
     try:
         raw: object = json.loads(row.candidates_json)
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        return [], f"`candidates_json` is not valid JSON ({exc.msg})"
     if not isinstance(raw, list):
-        return []
-    return [entry for entry in raw if isinstance(entry, dict)]
+        return [], (f"`candidates_json` holds a {type(raw).__name__}, not a list of candidates")
+    entries = [entry for entry in raw if isinstance(entry, dict)]
+    if raw and not entries:
+        return [], "`candidates_json` is a list, but none of its entries is a candidate object"
+    return entries, None
 
 
-def _stored_hints(row: ArtistMatch) -> ArtistHints | None:
-    """Return the hints recorded at match time, or `None` when none were.
+def _stored_hints(row: ArtistMatch) -> tuple[ArtistHints | None, str | None]:
+    """Return the hints recorded at match time, and why they are missing if they are.
 
-    `None` is a real answer here, not a default to paper over: without the
-    hints the GUID boost and both hint terms cannot be re-derived at all.
+    `None` with no reason is a real answer: the row predates the hints column,
+    so the GUID boost and both hint terms cannot be re-derived at all. `None`
+    with a reason is a different one — the hints were written and cannot be
+    read — and the note the caller prints has to say which, because "not
+    recorded" is a claim about what the matcher did.
     """
     if not row.hints_json:
-        return None
+        return None, None
     try:
         raw: object = json.loads(row.hints_json)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
-        return None
+    except json.JSONDecodeError as exc:
+        return None, f"`hints_json` is not valid JSON ({exc.msg})"
+    if not isinstance(raw, dict):
+        return None, f"`hints_json` holds a {type(raw).__name__}, not an object"
+    if not isinstance(raw.get("name"), str):
+        return None, "`hints_json` has no `name`, so the scorer's input cannot be rebuilt"
     return ArtistHints(
         name=raw["name"],
         guid_mbid=raw.get("guid_mbid") if isinstance(raw.get("guid_mbid"), str) else None,
         type_hint=raw.get("type_hint") if isinstance(raw.get("type_hint"), str) else None,
         country_hint=raw.get("country_hint") if isinstance(raw.get("country_hint"), str) else None,
-    )
+    ), None
 
 
 def _candidate_from_entry(entry: dict[str, Any]) -> ArtistCandidate | None:
@@ -212,8 +252,18 @@ def _deciding_sentence(
     candidates: tuple[CandidateExplanation, ...],
     threshold: float,
     margin: float,
+    evidence: str = EVIDENCE_COMPLETE,
 ) -> str:
     """One sentence naming what actually decided this, in the reason's terms."""
+    if evidence == EVIDENCE_UNREADABLE:
+        # First, because it dominates every other branch: with no readable
+        # candidates the two sentences below ("nothing to score", "no candidate
+        # was stored") would both be false statements about the matcher.
+        return (
+            "The evidence stored for this decision could not be read, so nothing here "
+            "attributes it to a candidate. The recorded reason above is the only "
+            "authority on what was decided."
+        )
     if reason == "no-candidates":
         return "MusicBrainz returned no candidate for this name, so there was nothing to score."
     if reason == "unrecorded":
@@ -263,34 +313,70 @@ def _deciding_sentence(
     )
 
 
-def explain_match(
-    row: ArtistMatch,
-    threshold: float = AUTO_MATCH_THRESHOLD,
-    ambiguity_margin: float = AMBIGUITY_MARGIN,
-) -> Explanation:
-    """Turn one stored decision back into the evidence behind it."""
-    entries = _stored_candidates(row)
-    hints = _stored_hints(row)
-    reason = row.decision_reason or "unrecorded"
-    notes: list[str] = []
+def _evidence_level(
+    entries: list[dict[str, Any]],
+    candidates_problem: str | None,
+    hints: ArtistHints | None,
+    hints_problem: str | None,
+    reason: str,
+) -> tuple[str, list[str]]:
+    """How much of the arithmetic this row supports, and what to say about it.
 
+    Extracted from `explain_match` so the four-way distinction — unreadable,
+    absent, scores-without-hints, complete — reads as one decision rather than
+    as branches interleaved with candidate assembly.
+    """
+    notes: list[str] = []
+    hints_unreadable_note = (
+        "The hints the scorer was given were recorded on this row and could not be read "
+        f"back: {hints_problem}. That is not the same as their never having been recorded, "
+        "and neither is a per-term breakdown. Re-run `encore match` for this artist to "
+        "rewrite the evidence."
+    )
+    if candidates_problem is not None:
+        notes.append(
+            "The candidate list stored for this artist could not be read back: "
+            f"{candidates_problem}. Evidence was written for this decision; what is "
+            "missing is the ability to read it, which is a different fact from this "
+            "artist never having been matched. Nothing below is a measurement of this "
+            "decision. Re-run `encore match` for this artist to rewrite the evidence."
+        )
+        if hints_problem is not None:
+            notes.append(hints_unreadable_note)
+        return EVIDENCE_UNREADABLE, notes
     if not entries:
-        evidence = EVIDENCE_NONE
         if reason == "unrecorded":
             notes.append(
                 "No candidate was ever stored for this artist: it has not been through the "
                 "matcher, or it was matched before candidates were kept. This is not the "
                 "same as a search that returned nothing."
             )
-    elif hints is None:
-        evidence = EVIDENCE_CANDIDATES_ONLY
+        return EVIDENCE_NONE, notes
+    if hints is None:
         notes.append(
-            "The hints the scorer was given were not recorded on this row, so the per-term "
-            "breakdown cannot be re-derived. The scores below are the ones stored at match "
-            "time. Re-run `encore match` for this artist to record the full evidence."
+            hints_unreadable_note
+            if hints_problem is not None
+            else (
+                "The hints the scorer was given were not recorded on this row, so the "
+                "per-term breakdown cannot be re-derived. The scores below are the ones "
+                "stored at match time. Re-run `encore match` for this artist to record "
+                "the full evidence."
+            )
         )
-    else:
-        evidence = EVIDENCE_COMPLETE
+        return EVIDENCE_CANDIDATES_ONLY, notes
+    return EVIDENCE_COMPLETE, notes
+
+
+def explain_match(
+    row: ArtistMatch,
+    threshold: float = AUTO_MATCH_THRESHOLD,
+    ambiguity_margin: float = AMBIGUITY_MARGIN,
+) -> Explanation:
+    """Turn one stored decision back into the evidence behind it."""
+    entries, candidates_problem = _stored_candidates(row)
+    hints, hints_problem = _stored_hints(row)
+    reason = row.decision_reason or "unrecorded"
+    evidence, notes = _evidence_level(entries, candidates_problem, hints, hints_problem, reason)
 
     candidates: list[CandidateExplanation] = []
     incomplete_inputs = False
@@ -342,7 +428,9 @@ def explain_match(
         confidence=row.confidence,
         reason=reason,
         evidence=evidence,
-        deciding=_deciding_sentence(reason, tuple(candidates), threshold, ambiguity_margin),
+        deciding=_deciding_sentence(
+            reason, tuple(candidates), threshold, ambiguity_margin, evidence
+        ),
         candidates=tuple(candidates),
         threshold=threshold,
         ambiguity_margin=ambiguity_margin,
@@ -368,7 +456,12 @@ def render_text(explanation: Explanation) -> str:
     if explanation.notes:
         lines.append("")
 
-    if not explanation.candidates:
+    if not explanation.candidates and explanation.evidence == EVIDENCE_UNREADABLE:
+        lines.append(
+            "candidates: stored, and unreadable — see the note above. This is not "
+            "an empty candidate list."
+        )
+    elif not explanation.candidates:
         lines.append("candidates: none stored — this artist has never been matched.")
     else:
         lines.append("candidates, best first:")
@@ -427,7 +520,14 @@ def audit_record(explanation: Explanation) -> dict[str, Any]:
         "confidence": explanation.confidence,
         "reason": explanation.reason,
         "evidence": explanation.evidence,
-        "candidate_count": len(explanation.candidates),
+        # `null`, not `0`, when the stored evidence could not be read. A zero
+        # here would enter a reviewer's sample sheet as a measured finding —
+        # "the matcher considered nothing" — and `score_audit` is strict about
+        # unlabelled rows precisely so that no absence is scored as a result.
+        # The writer has to hold the same line as the reader.
+        "candidate_count": (
+            None if explanation.evidence == EVIDENCE_UNREADABLE else len(explanation.candidates)
+        ),
         "best_score": best.recorded_score if best else None,
         "runner_up_score": runner_up.recorded_score if runner_up else None,
         "deciding": explanation.deciding,
