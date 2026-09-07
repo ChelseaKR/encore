@@ -274,3 +274,166 @@ def test_the_roadmap_coverage_target_is_the_floor_the_build_actually_enforces() 
         f"docs/ROADMAP.md §7 publishes a branch-coverage target of {target!r} while the "
         f"build enforces ≥{floor}%. The document restates a number the build owns."
     )
+
+
+# --- The release workflow's claim about itself (issue #50) -------------------
+#
+# The container half of `release.yml` built `ghcr.io/chelseakr/encore:${TAG}`,
+# CVE-scanned it, and ended. There was no `docker login`, no `docker push` and
+# no `packages: write` anywhere in the file, so the image was built on the
+# runner and discarded — and M4's "v0.1.0 published to GHCR" exit criterion was
+# not reachable by running the workflow named for it. The run would go green
+# and publish nothing, which is the worst way for this to fail: a green release
+# reads as a met criterion.
+#
+# Nothing could have caught that, because no gate read the workflow. These do.
+
+RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
+_PUBLISHING_JOB = "build-sign-publish"
+
+
+def _jobs(workflow: Path) -> dict[str, dict[str, object]]:
+    doc = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    jobs = doc.get("jobs") or {}
+    assert isinstance(jobs, dict) and jobs, f"{workflow.name} declares no jobs"
+    return jobs
+
+
+def _job_run_steps(workflow: Path, job_name: str) -> list[str]:
+    """Every `run:` block of one job, in the order the job runs them."""
+    job = _jobs(workflow).get(job_name)
+    assert job is not None, (
+        f"{workflow.name} has no {job_name!r} job. It was not deleted by this gate; "
+        f"if the job was renamed, re-point the gate rather than removing it."
+    )
+    steps = job.get("steps") or []
+    assert isinstance(steps, list)
+    return [step["run"] for step in steps if isinstance(step.get("run"), str)]
+
+
+def _index_of(steps: list[str], needle: str) -> int:
+    for index, run in enumerate(steps):
+        if needle in run:
+            return index
+    pytest.fail(f"no release step runs {needle!r}; steps were: {steps}")
+
+
+def test_the_release_workflow_actually_pushes_the_image_to_ghcr() -> None:
+    """A workflow that builds an image and never pushes it publishes nothing.
+
+    M4's first exit criterion is "v0.1.0 published to GHCR". Building the tag
+    locally and scanning it satisfies neither half of that sentence.
+    """
+    steps = _job_run_steps(RELEASE_WORKFLOW, _PUBLISHING_JOB)
+    joined = "\n".join(steps)
+    assert "docker push" in joined, (
+        "release.yml builds ghcr.io/chelseakr/encore:${TAG} and never pushes it. "
+        "The image is discarded when the runner ends, so the release publishes "
+        "nothing to GHCR while reporting success (issue #50)."
+    )
+    assert "docker login ghcr.io" in joined, (
+        "release.yml pushes to GHCR without authenticating to it."
+    )
+
+
+def test_the_pushed_image_is_the_one_that_was_scanned() -> None:
+    """Ordering, not presence: the CVE gate must precede the publish.
+
+    A push before the Trivy scan would make the scan advisory — the image
+    users pull would already exist by the time the gate had an opinion. A
+    second `docker build` between them would mean the scanned bytes and the
+    published bytes are merely two builds of the same Dockerfile.
+    """
+    steps = _job_run_steps(RELEASE_WORKFLOW, _PUBLISHING_JOB)
+    build = _index_of(steps, "docker build")
+    scan = _index_of(steps, "trivy image")
+    push = _index_of(steps, "docker push")
+    assert build < scan < push, (
+        f"release.yml runs build={build}, scan={scan}, push={push}. The scan has to sit "
+        f"between them or it does not gate what is published."
+    )
+    between = steps[scan + 1 : push + 1]
+    assert not any("docker build" in run for run in between), (
+        "release.yml rebuilds the image between the CVE scan and the push, so the "
+        "scanned image is not the published one."
+    )
+
+
+def test_the_publish_step_checks_at_runtime_that_it_is_pushing_the_scanned_image() -> None:
+    """Static ordering is an arrangement; this is the assertion that enforces it.
+
+    The ordering test above reads the workflow file. It cannot see a step that
+    re-tags the image at run time, and it is satisfied by any file whose steps
+    happen to be in the right sequence. So the scan step records the local id of
+    the image it passed, and the push step refuses to publish anything else.
+
+    The check has to *span* the two steps to mean anything. An earlier draft
+    captured the id inside the push step, immediately before `docker push`, and
+    compared it immediately after — but `docker push` does not change a local
+    image id, so that comparison could not fail under any circumstance. It read
+    as provenance and asserted nothing. This gate pins the shape that does work:
+    recorded by the scan, consumed by the push.
+    """
+    steps = _job_run_steps(RELEASE_WORKFLOW, _PUBLISHING_JOB)
+    scan = _index_of(steps, "trivy image")
+    push = _index_of(steps, "docker push")
+    assert "SCANNED_IMAGE_ID=" in steps[scan] and "GITHUB_ENV" in steps[scan], (
+        "release.yml's CVE scan step does not export SCANNED_IMAGE_ID, so the push step "
+        "has nothing to compare against and cannot tell a scanned image from any other."
+    )
+
+    # Everything the push step does *before* it publishes. A check made after
+    # `docker push` cannot stop an unscanned image from reaching the registry.
+    before_push = steps[push].split("docker push", 1)[0]
+
+    # Deliberately not `"SCANNED_IMAGE_ID" in before_push`. That weaker form was
+    # written first and a negative control walked straight through it: deleting
+    # the comparison left a `test -n "${SCANNED_IMAGE_ID:-}"` presence guard
+    # behind, the substring still matched, and the suite stayed green over a
+    # step that would happily publish a substituted image.
+    comparisons = [
+        (match.group("lhs"), match.group("rhs"))
+        for match in re.finditer(
+            r'test\s+"\$\{(?P<lhs>\w+)\}"\s*=\s*"\$\{(?P<rhs>\w+)\}"', before_push
+        )
+    ]
+    named = [pair for pair in comparisons if "SCANNED_IMAGE_ID" in pair]
+    assert named, (
+        "release.yml's push step never compares anything against SCANNED_IMAGE_ID before "
+        "`docker push`. Mentioning the variable — a `test -n` guard, a comment — does not "
+        "stop an unscanned image from being published; the id the tag resolves to now has "
+        "to be compared against the id the CVE gate passed."
+    )
+    others = [name for pair in named for name in pair if name != "SCANNED_IMAGE_ID"]
+    assert others, (
+        "release.yml's push step compares SCANNED_IMAGE_ID against itself. That holds for "
+        "every image, scanned or not."
+    )
+    other = others[0]
+    assignment = re.search(rf'{other}="\$\((?P<command>[^)]*)\)"', before_push)
+    assert assignment is not None and "docker image inspect" in assignment.group("command"), (
+        f"release.yml's push step compares SCANNED_IMAGE_ID against {other!r}, which is not "
+        f"read from `docker image inspect` in the same step. The comparison only means "
+        f"something against the id the tag resolves to at push time."
+    )
+
+
+def test_only_the_publishing_job_may_write_packages() -> None:
+    """`packages: write` is scoped to the one job that needs it."""
+    jobs = _jobs(RELEASE_WORKFLOW)
+    publishing = jobs[_PUBLISHING_JOB]
+    permissions = publishing.get("permissions") or {}
+    assert isinstance(permissions, dict)
+    assert permissions.get("packages") == "write", (
+        "release.yml's publishing job cannot push to GHCR: it has no `packages: write`. "
+        "The push step would fail with a 403 at the very end of a release run."
+    )
+    for name, job in jobs.items():
+        if name == _PUBLISHING_JOB:
+            continue
+        other = job.get("permissions") or {}
+        assert isinstance(other, dict)
+        assert other.get("packages") is None, (
+            f"release.yml's {name!r} job also holds a `packages` permission. Only the "
+            f"job that pushes the image should be able to write packages."
+        )

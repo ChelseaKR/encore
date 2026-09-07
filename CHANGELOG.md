@@ -6,6 +6,51 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release workflow built the GHCR image and threw it away.** `release.yml`'s
+  container half ran `docker build -t ghcr.io/chelseakr/encore:${TAG} .`, CVE-scanned
+  the result with Trivy, and ended. There was no `docker login`, no `docker push`, and
+  no `packages: write` anywhere in the file — grepped for all three, none present. The
+  image existed only on the runner and was discarded with it.
+
+  M4's first exit criterion is "v0.1.0 published to GHCR" (`docs/ROADMAP.md` §8). That
+  criterion was not reachable by running the workflow named for it: the run would go
+  green, attach the wheel, sdist, SBOM and checksums to a GitHub release, and publish
+  nothing to any registry. A green release run reads as a met criterion, which is the
+  worst available way for this to be wrong. Issue #50.
+
+  The push now happens **after** the Trivy gate, on the same local tag, with no
+  intervening `docker build`, so the image users pull is the image that was scanned
+  rather than a second build of the same Dockerfile. `packages: write` is scoped to
+  that one job; `verify-at-tag` and `publish-release` stay read-only. The published
+  digest is written to the run's step summary so a release can cite what was actually
+  pushed.
+
+  The scan step records the local id of the image it passed and the push step refuses
+  to publish anything else. That comparison spans the two steps deliberately. The first
+  draft of it did not: it captured the id inside the push step, immediately before
+  `docker push`, and compared it immediately after — and `docker push` does not change
+  a local image id, so the comparison could not fail. Measured against a throwaway
+  registry: with a second `docker build` re-pointing the tag between scan and push, the
+  original check exits **0** on the substituted image and the spanning check exits
+  **1**. A check that reads as provenance and asserts nothing is worse than none,
+  because it is what gets cited.
+
+  The push step also counts `RepoDigests` before indexing it. The digest is empty until
+  the first successful push, so indexing it blind fails with a Go template error after
+  the image is already public — and a release must never cite a digest that is not one.
+
+  Nothing read `release.yml`, which is why nothing caught this. Four gates in
+  `tests/test_published_claims.py` now do: the workflow pushes and authenticates; the
+  scan sits between the build and the push and nothing rebuilds in between; the push
+  step checks the scan's recorded id *before* pushing; and only the publishing job may
+  write packages. The controls: reverting `release.yml` to `origin/main` — which
+  restores the original defect exactly — fails three of the four, and each of deleting
+  the push, pushing before the scan, rebuilding between scan and push, and dropping
+  `packages: write` fails at least one. Each sabotage was confirmed landed by a changed
+  `git hash-object`, and the file restored to a byte-identical hash afterwards.
+
 ### Added
 
 - **Signed outbound webhooks, with a versioned event schema.** The README's non-goals

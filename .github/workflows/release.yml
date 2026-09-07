@@ -9,6 +9,13 @@
 # of this job re-implemented ruff/mypy/pytest by hand and silently dropped the
 # security stage entirely — fixed here by calling `make verify` instead of
 # reinventing it.)
+#
+# The container half used to build `ghcr.io/chelseakr/encore:${TAG}`, scan it,
+# and then end — no `docker login`, no `docker push`, no `packages: write`.
+# The image was built on the runner and discarded, so M4's "v0.1.0 published to
+# GHCR" exit criterion was not reachable by running this workflow: it would go
+# green and publish nothing. Issue #50. The push now happens after the Trivy
+# gate, on the same local tag, so the published image is the scanned one.
 name: release
 
 on:
@@ -121,13 +128,17 @@ jobs:
         run: make verify
 
   build-sign-publish:
-    name: build · scan · package
+    name: build · scan · publish · package
     runs-on: ubuntu-latest
     needs: [verify-at-tag]
     permissions:
       contents: read
       id-token: write
       attestations: write
+      # Needed to push the release image to GHCR. Scoped to this job only —
+      # `verify-at-tag` and `publish-release` stay read-only, so the token that
+      # can write packages exists solely for the build-scan-push step.
+      packages: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
@@ -166,13 +177,73 @@ jobs:
         # identical to the Makefile target's — if you change one, change both.
         env:
           IMAGE: "ghcr.io/chelseakr/encore:${{ needs.verify-at-tag.outputs.release_tag }}"
+        shell: bash
         run: |
+          set -euo pipefail
           TRIVY=0.74.0
           curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY}/trivy_${TRIVY}_Linux-64bit.tar.gz" \
             | tar -xz -C /usr/local/bin trivy
           chmod +x /usr/local/bin/trivy
           trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
             --scanners vuln --skip-version-check "${IMAGE}"
+          # Record which local image this gate actually passed, so the push step
+          # can prove it publishes that one. Captured after the scan on purpose:
+          # a value read before it would attest to an image the gate had not yet
+          # examined. Assigned first, then echoed — `echo "$(cmd)"` would throw
+          # away the command's exit status and write an empty id on failure.
+          SCANNED_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "${IMAGE}")"
+          echo "SCANNED_IMAGE_ID=${SCANNED_IMAGE_ID}" >> "${GITHUB_ENV}"
+      - name: Push the scanned image to GHCR (M4 exit criterion, issue #50)
+        # Ordered deliberately after the Trivy gate: the image that is pushed is
+        # the one that was scanned, not a rebuild of it. The `SCANNED_IMAGE_ID`
+        # comparison below is what makes that a fact rather than an arrangement.
+        # It spans the step boundary — the id was recorded by the scan step — so
+        # any step inserted between the two that rebuilds or re-tags the image
+        # fails the release before anything is published.
+        #
+        # An earlier draft of this step captured the id here, immediately before
+        # `docker push`, and compared it immediately after. `docker push` cannot
+        # change a local image id, so that comparison could not fail: it read as
+        # a provenance check and asserted nothing. Measured against a throwaway
+        # registry before this was rewritten.
+        env:
+          IMAGE: "ghcr.io/chelseakr/encore:${{ needs.verify-at-tag.outputs.release_tag }}"
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SCANNED_IMAGE_ID:-}" || {
+            echo "::error::the CVE scan step recorded no image id; refusing to publish" >&2
+            exit 1
+          }
+          PUSH_CANDIDATE_ID="$(docker image inspect --format '{{.Id}}' "${IMAGE}")"
+          test "${PUSH_CANDIDATE_ID}" = "${SCANNED_IMAGE_ID}" || {
+            echo "::error::${IMAGE} now resolves to ${PUSH_CANDIDATE_ID}, but the CVE gate" \
+                 "passed ${SCANNED_IMAGE_ID}. Refusing to publish an unscanned image." >&2
+            exit 1
+          }
+          printf '%s' "${REGISTRY_TOKEN}" \
+            | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          docker push "${IMAGE}"
+          docker logout ghcr.io
+          # `docker push` populates RepoDigests with the digest the registry
+          # assigned; it is empty before the first push. Check the length before
+          # indexing, so an absent digest is a named failure rather than a Go
+          # template error — and so no release can cite a digest that is not one.
+          DIGEST_COUNT="$(docker image inspect --format '{{len .RepoDigests}}' "${IMAGE}")"
+          test "${DIGEST_COUNT}" -ge 1 || {
+            echo "::error::pushed ${IMAGE} but the daemon recorded no repo digest for it" >&2
+            exit 1
+          }
+          PUSHED_DIGEST="$(docker image inspect --format '{{index .RepoDigests 0}}' "${IMAGE}")"
+          {
+            echo "### Published container"
+            echo
+            echo '```'
+            echo "image:  ${IMAGE}"
+            echo "digest: ${PUSHED_DIGEST}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assets
