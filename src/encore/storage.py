@@ -618,6 +618,27 @@ class Storage:
             statement = select(ReleaseGroup).where(ReleaseGroup.artist_mbid == artist_mbid)
             return list(session.exec(statement).all())
 
+    def all_release_groups(self) -> list[ReleaseGroup]:
+        """Every recorded release-group, across every watched identity.
+
+        The whole corpus rather than one artist's slice, because
+        `encore.simulate` replays groups (not events) and needs each artist's
+        *earliest* row to tell a baseline poll apart from a later one.
+        """
+        with self.session() as session:
+            return list(session.exec(select(ReleaseGroup)).all())
+
+    def owners_by_mbid(self, artist_mbids: Sequence[str]) -> dict[str, list[Artist]]:
+        """Live Plex rows owning each identity; an unowned MBID maps to ``[]``.
+
+        Public because the simulator needs the same library keys, artist keys
+        and source that `ensure_deliveries` routes on. Total over the input for
+        the same reason it is there: an F8-promoted identity deliberately has no
+        Plex row, and that must be distinguishable from a failed lookup.
+        """
+        with self.session() as session:
+            return self._owners_by_mbid(session, set(artist_mbids))
+
     def has_release_groups(self, artist_mbid: str) -> bool:
         """Whether any release-group row exists for this artist (baseline test)."""
         with self.session() as session:
@@ -1381,7 +1402,9 @@ class Storage:
         )
 
     def effective_watch_settings_for_mbids(
-        self, artist_mbids: Sequence[str]
+        self,
+        artist_mbids: Sequence[str],
+        defaults: SettingsOverride | None = None,
     ) -> dict[str, ArtistWatchSettings]:
         """Resolve effective settings for many artist MBIDs in one pass.
 
@@ -1399,12 +1422,25 @@ class Storage:
         restriction", so the F10 albums-only default was silently skipped for
         exactly the artists a user discovered rather than owned (issue #33).
         The mapping is therefore total over ``artist_mbids``.
+
+        Args:
+            artist_mbids: the identities to resolve.
+            defaults: a proposed global layer to resolve against instead of the
+                stored one. ``None`` reads the stored defaults, which is every
+                caller but the simulator.
         """
         today = utcnow().date()
         unique_ids = list(dict.fromkeys(artist_mbids))
         if not unique_ids:
             return {}
-        defaults = self.get_watch_defaults()
+        # `defaults` is a *proposed* global layer, for `encore settings simulate`
+        # (#58): the caller asks what that layer would have done. Nothing else
+        # passes it, so the stored defaults are still what every other caller
+        # resolves against. Every other layering rule is untouched, which is the
+        # point -- a simulation that resolved policy differently from delivery
+        # would be measuring its own reimplementation.
+        if defaults is None:
+            defaults = self.get_watch_defaults()
         with self.session() as session:
             matches = session.exec(
                 select(ArtistMatch).where(

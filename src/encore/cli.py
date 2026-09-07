@@ -33,6 +33,7 @@ access the operator already has to the data directory.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import getpass
 import json
 import os
@@ -89,6 +90,9 @@ from encore.portable import (
 from encore.recommend.engine import PROVENANCE_LIMIT, refresh_recommendations
 from encore.recommend.lb import ListenBrainzClient
 from encore.secretstore import SecretDecryptionError
+from encore.simulate import diff_reports, run_simulation
+from encore.simulate import format_report as simulate_format_report
+from encore.simulate import report_payload as simulate_report_payload
 from encore.storage import (
     DATA_DIR_ENV,
     DB_FILENAME,
@@ -482,6 +486,38 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="TYPES",
         help="Comma-separated secondary types allowed by default "
         "('' clears the list; omit to keep the current list)",
+    )
+
+    settings_simulate = settings_sub.add_parser(
+        "simulate",
+        help="Replay recorded history through a proposed policy, before changing anything",
+    )
+    settings_simulate.add_argument("--data-dir", default=None, help=_DATA_DIR_HELP)
+    settings_simulate.add_argument(
+        "--allow-primary",
+        default=None,
+        metavar="TYPES",
+        help="Proposed primary-type allowlist (omit to replay the policy in force)",
+    )
+    settings_simulate.add_argument(
+        "--allow-secondary",
+        default=None,
+        metavar="TYPES",
+        help="Proposed secondary-type allowlist ('' proposes none)",
+    )
+    settings_simulate.add_argument(
+        "--since",
+        default="90d",
+        metavar="WINDOW",
+        help="How far back to replay, as Nd/Nw (default: 90d)",
+    )
+    settings_simulate.add_argument(
+        "--diff",
+        action="store_true",
+        help="List only the observations whose outcome changes versus the policy in force.",
+    )
+    settings_simulate.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit the report as JSON."
     )
 
     recommend = subparsers.add_parser(
@@ -1423,9 +1459,92 @@ _ARTISTS_COMMANDS = {
     "settings": _cmd_artists_settings,
 }
 
+
+def _parse_window(raw: str) -> dt.timedelta:
+    """Parse an `Nd`/`Nw` lookback, refusing anything else by name."""
+    text = raw.strip().lower()
+    if text.endswith("d") and text[:-1].isdigit():
+        return dt.timedelta(days=int(text[:-1]))
+    if text.endswith("w") and text[:-1].isdigit():
+        return dt.timedelta(weeks=int(text[:-1]))
+    raise SettingsError(f"--since must look like 30d or 6w, not {raw!r}")
+
+
+def _proposed_defaults(args: argparse.Namespace) -> SettingsOverride | None:
+    """Build the proposed global layer, or ``None`` to replay what is in force.
+
+    An omitted flag inherits the stored value rather than resetting it, so
+    ``--allow-secondary live`` alone proposes "today's primaries, plus live"
+    and not "albums only, plus live". Proposing something the operator did not
+    say would make the simulation answer a different question from the one
+    asked.
+    """
+    if args.allow_primary is None and args.allow_secondary is None:
+        return None
+    stored = Storage(args.data_dir)
+    try:
+        current = stored.get_watch_defaults()
+    finally:
+        stored.close()
+    primary = (
+        current.allow_primary
+        if args.allow_primary is None
+        else parse_primary_types(args.allow_primary)
+    )
+    secondary = (
+        current.allow_secondary
+        if args.allow_secondary is None
+        else (parse_secondary_types(args.allow_secondary) if args.allow_secondary.strip() else ())
+    )
+    return SettingsOverride(allow_primary=primary, allow_secondary=secondary)
+
+
+def _cmd_settings_simulate(args: argparse.Namespace) -> int:
+    """Replay recorded history through a proposed policy (#58).
+
+    Offline and deterministic: the corpus is what encore already recorded, and
+    nothing here opens a socket. Exits 0 on an empty window — "nothing to
+    simulate" is an answer, not a failure.
+    """
+    try:
+        window = _parse_window(args.since)
+        proposed = _proposed_defaults(args)
+    except (SettingsError, StorageError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    end = utcnow()
+    start = end - window
+    try:
+        storage = Storage(args.data_dir)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        report = run_simulation(
+            storage, window_start=start, window_end=end, proposed_defaults=proposed
+        )
+        changes = None
+        if args.diff:
+            in_force = run_simulation(storage, window_start=start, window_end=end)
+            changes = diff_reports(in_force, report)
+    except StorageError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        storage.close()
+    if args.as_json:
+        print(
+            json.dumps(simulate_report_payload(report, changes=changes), indent=2, sort_keys=True)
+        )
+    else:
+        print(simulate_format_report(report, changes=changes))
+    return 0
+
+
 _SETTINGS_COMMANDS = {
     "show": _cmd_settings_show,
     "default-types": _cmd_settings_default_types,
+    "simulate": _cmd_settings_simulate,
 }
 
 _RECS_COMMANDS = {
