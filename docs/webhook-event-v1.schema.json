@@ -37,7 +37,7 @@
       "additionalProperties": false,
       "required": ["name", "mbid"],
       "properties": {
-        "name": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"], "description": "Artist display name. Null when this build cannot resolve one." },
         "mbid": { "type": ["string", "null"], "description": "MusicBrainz artist identifier." }
       }
     },
@@ -59,7 +59,7 @@
         },
         "first_release_date": {
           "type": ["string", "null"],
-          "description": "MusicBrainz's partial date verbatim: 2027, 2027-03, or 2027-03-14. Never padded, because padding invents precision MusicBrainz did not publish."
+          "description": "MusicBrainz's partial date verbatim: 2027, 2027-03, or 2027-03-14. Never padded, because padding invents precision MusicBrainz did not publish. Null when MusicBrainz publishes no date, which is an ordinary case: an undated release group still raises a release.new event."
         }
       }
     },
