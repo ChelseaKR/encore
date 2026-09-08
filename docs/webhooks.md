@@ -83,7 +83,11 @@ missing. You should never have to tell "this release has no cover art" from
 
 **`first_release_date` is MusicBrainz's partial date verbatim** — `2027`,
 `2027-03`, or `2027-03-14`. It is never padded to a full date, because padding
-invents precision MusicBrainz did not publish.
+invents precision MusicBrainz did not publish, and it is `null` when
+MusicBrainz publishes no date at all. That is an ordinary case, not an edge
+one: an undated release group still raises a `release.new` event, and it used
+to arrive here as `""` — a value your parser would have had to special-case,
+against the rule in the paragraph above.
 
 **`links.plex` is `null` until a Plex sync has run**, and for an artist with no
 Plex row (one promoted from a recommendation, say). A deep link built from a

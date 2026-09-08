@@ -8,6 +8,35 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A release MusicBrainz has not dated was published to subscribers as
+  `"first_release_date": ""`.** `docs/webhooks.md` promises that "a value the
+  record does not have is `null`, not missing", and `notify/webhook.py`'s own
+  docstring names reading absence as a value as "the defect class this project
+  spends most of its tests on". Two absences reached the builder spelled as an
+  empty string instead of `None`, and were passed through:
+  `first_release_date`, which `matching/mb.py` sets to `""` whenever
+  MusicBrainz publishes no date, and `artist_name`, whose lookup in
+  `storage.list_event_views` ends in `.get(group.artist_mbid, "")`.
+
+  An undated release group is an ordinary event, not an edge case:
+  `watch/engine.py::_kind_for_unseen` raises `release.new` for one by design,
+  and `RELEASE_EVENT_KINDS` says so in as many words. Measured on `origin/main`:
+  a view with `first_release_date=""` produced `""` in the envelope, while the
+  `channels test` fire sent `null` for the same key and `notify/render.py`
+  printed "date not announced" — three spellings of one fact, one of them a
+  value a subscriber's `date.fromisoformat` refuses and a template renders as a
+  blank.
+
+  Both keys are now `null` when empty. `test_absent_values_are_null_and_the_keys_stay`
+  had exercised only the two absences already spelled `None` (`primary_type`,
+  `links.plex`), so the two spelled `""` sat where that test could not reach
+  them; the new tests cover both, assert the property over every leaf in the
+  envelope rather than key by key, and pin the other direction — a real partial
+  date and a real name are not coerced, and an empty `secondary_types` list
+  stays `[]` because there it is a measurement ("MusicBrainz publishes none")
+  rather than an absence. The published schema and `docs/webhooks.md` now say
+  when the field is null.
+
 - **A corrupt evidence column explained as "this artist has never been matched".**
   `encore matches explain` opens with a rule in bold — *what was not recorded is
   reported as not recorded* — and its own reader broke it. `_stored_candidates`

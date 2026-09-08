@@ -144,6 +144,52 @@ class TestTheEnvelope:
         envelope = event_envelope(make_view(first_release_date="2027"))
         assert envelope["release_group"]["first_release_date"] == "2027"
 
+    def test_an_undated_release_group_publishes_null_rather_than_an_empty_string(self) -> None:
+        """The absence spelled `""` upstream, published as the absence it is.
+
+        `matching.mb._parse_release_group` writes `""` for a release group
+        MusicBrainz has not dated, and `watch.engine._kind_for_unseen` raises an
+        ordinary `new` event for it. The envelope published that `""` verbatim
+        while `channel_test_envelope` sent `null` for the same key and
+        `notify.render` printed "date not announced" — three spellings of one
+        fact, one of them a value.
+        """
+        envelope = event_envelope(make_view(first_release_date=""))
+        assert envelope["release_group"]["first_release_date"] is None
+        assert "first_release_date" in envelope["release_group"]
+
+    def test_an_unresolvable_artist_name_publishes_null_rather_than_an_empty_string(self) -> None:
+        """`storage.list_event_views` ends its name lookup with `.get(mbid, "")`."""
+        assert event_envelope(make_view(artist_name=""))["artist"]["name"] is None
+
+    def test_no_value_in_the_envelope_is_an_empty_string(self) -> None:
+        """The property, over a view whose every absence is spelled `""`.
+
+        Asserted on leaves rather than on the two keys above, so a third field
+        that starts arriving empty is caught by the rule instead of needing its
+        own test written first.
+        """
+        envelope = event_envelope(make_view(first_release_date="", artist_name=""))
+        empty: list[str] = []
+        for section, value in envelope.items():
+            if isinstance(value, dict):
+                empty.extend(f"{section}.{key}" for key, leaf in value.items() if leaf == "")
+            elif value == "":
+                empty.append(section)
+        assert not empty, f"absence published as an empty string: {empty}"
+
+    def test_a_real_value_is_never_coerced_to_null(self) -> None:
+        """The boundary in the other direction.
+
+        `or None` on a populated string would be a different defect with the
+        same shape, and an empty `secondary_types` list is a *measurement* —
+        "MusicBrainz publishes none" — that must survive as `[]`.
+        """
+        envelope = event_envelope(make_view(first_release_date="2027-03", artist_name="Låpsley"))
+        assert envelope["release_group"]["first_release_date"] == "2027-03"
+        assert envelope["artist"]["name"] == "Låpsley"
+        assert envelope["release_group"]["secondary_types"] == []
+
     def test_the_test_fire_has_the_same_shape_as_a_release(self) -> None:
         """So a subscriber's parser is exercised by it, not bypassed."""
         real = event_envelope(make_view())
