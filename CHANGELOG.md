@@ -8,6 +8,28 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`docs/ROADMAP.md` §7 published a coverage percentage and a test count that
+  nothing derived, and both were wrong.** The branch-coverage row's status cell
+  read "Met (95.85% over 172 tests, covering F0-F4)". Measured 2026-09-09 on
+  `89e676d`: `make cov` reports **92.78%** branch coverage over **694** collected
+  tests. The percentage was stale *upward*, which is the direction that least
+  looks like it needs attention, and the count was low by roughly a factor of
+  four.
+
+  The cell now states what enforces the floor — `pyproject.toml`'s `fail_under`
+  and `make cov`'s `--cov-fail-under`, the same two sources the target column is
+  already derived from — and publishes no measurement of its own. That is the
+  cheaper of the two options #75 puts to the maintainer, and this repository has
+  already measured the cost of the other one: a figure that moves on every commit
+  and lives on one line of tracked prose is the collision that put `main` red in
+  #73, and coverage churns far more often than a test-module count does. If §7
+  should carry live values after all, the way in is a writer that runs the suite
+  and a `--check` half that gates, not a number retyped into the row.
+
+  `tests/test_published_claims.py` now holds the cell to that in both
+  directions: no percentage and no test count, and the two enforcement points it
+  names must be the two the build actually runs.
+
 - **A release MusicBrainz has not dated was published to subscribers as
   `"first_release_date": ""`.** `docs/webhooks.md` promises that "a value the
   record does not have is `null`, not missing", and `notify/webhook.py`'s own

@@ -209,11 +209,24 @@ def test_the_pull_request_template_names_the_targets_ci_omits() -> None:
 # The `Branch coverage` row's TARGET column is the half that is mechanical and
 # safe to gate: it restates a floor that already lives, twice, in the build.
 #
-# The same row's "Current status" cell also carries a measured percentage and a
-# test count. Those are NOT gated here, deliberately — re-deriving them changes
-# a number this project publishes about itself, and #75 leaves that call to the
-# maintainer. Adding a gate that goes red on today's committed text would put
-# `main` red to make a point.
+# The same row's "Current status" cell carried a measured percentage and a test
+# count as well. An earlier pass left those ungated on the grounds that a gate
+# going red on the committed text would put `main` red to make a point. That was
+# right about the gate and wrong about the text: measured 2026-09-09 on
+# `89e676d`, the cell read "95.85% over 172 tests" while `make cov` reported
+# 92.78% branch coverage over 694 collected tests. The number was not merely
+# undrived, it was false, and stale *upward* — the direction that least looks
+# like it needs attention.
+#
+# #75 puts two options to the maintainer: keep live values (which needs a writer
+# that runs the suite, in the shape of `mrf-honest/tools/publish_metrics.py`), or
+# state what the gate is and stop restating a measurement. This repository has
+# already measured what the first option costs: a figure that moves on every
+# commit, living on one line of tracked prose, is exactly the collision that put
+# `main` red in #73 — and coverage churns far more often than a test-module
+# count. So the cell now names the enforcement and publishes no measurement, and
+# these gates hold it to that: no percentage, no test count, and the two
+# mechanisms it names must be the two the build actually runs.
 #
 # Written as a TWO-STEP check, which is the shape that survives the merge
 # collapse this repository measured in production (#73): resolve what the
@@ -273,6 +286,65 @@ def test_the_roadmap_coverage_target_is_the_floor_the_build_actually_enforces() 
     assert target == f"≥{floor}%", (
         f"docs/ROADMAP.md §7 publishes a branch-coverage target of {target!r} while the "
         f"build enforces ≥{floor}%. The document restates a number the build owns."
+    )
+
+
+#: A percentage written in prose: `93%`, `92.78 %`. The target column is a
+#: separate cell and is derived, so this pattern is only ever applied to the
+#: status cell.
+_PERCENTAGE = re.compile(r"\d+(?:\.\d+)?\s*%")
+
+#: A test count: "172 tests", "over 694 tests", "694 collected tests".
+_TEST_COUNT = re.compile(r"\d+\s+(?:\w+\s+)?tests?\b", re.IGNORECASE)
+
+#: The two places the build states the floor. `_declared_coverage_floor` has
+#: already proved both exist and agree; the status cell has to name both, so a
+#: reader is sent to the mechanism rather than to a number.
+_ENFORCEMENT_TOKENS = ("fail_under", "--cov-fail-under")
+
+
+def test_the_coverage_row_publishes_no_measurement_nothing_recomputes() -> None:
+    """§7's branch-coverage status cell states the gate, and states no figure.
+
+    Two halves, and the second is what stops the cell being gutted to the word
+    "Met":
+
+    * **No measurement.** A percentage or a test count in this cell is a number
+      a human typed and nothing re-derives. The cell carried one for months and
+      it was wrong in both figures by the time anyone measured.
+    * **The enforcement, named, and real.** The cell must name `fail_under` and
+      `--cov-fail-under`, and `_declared_coverage_floor` has already required
+      that both exist in `pyproject.toml` and the Makefile and agree — so this
+      is a relation between the document and the build, not a spelling check.
+
+    If a later change decides §7 *should* carry live values after all, the
+    honest way in is a writer that runs the suite and a `--check` half that is a
+    gate (#75), not a number retyped into this row: delete this test in the same
+    commit that adds the writer, so the trade is visible in one diff.
+    """
+    floor = _declared_coverage_floor()
+    status = _roadmap_row(_COVERAGE_METRIC)[-1]
+
+    percentage = _PERCENTAGE.search(status)
+    assert percentage is None, (
+        f"docs/ROADMAP.md §7's branch-coverage status cell publishes {percentage.group(0)!r}. "
+        f"Nothing in this repository recomputes a coverage percentage into that cell, so it "
+        f"is stale from the commit after the one that measured it. The floor is in the target "
+        f"column, derived from the build's own ≥{floor}%."
+    )
+
+    count = _TEST_COUNT.search(status)
+    assert count is None, (
+        f"docs/ROADMAP.md §7's branch-coverage status cell publishes {count.group(0)!r}. "
+        f"A test count moves with every added module and nothing recomputes it here; "
+        f"`docs/DOCUMENTATION-AUDIT.md` is the generated inventory that does."
+    )
+
+    missing = [token for token in _ENFORCEMENT_TOKENS if token not in status]
+    assert not missing, (
+        f"docs/ROADMAP.md §7's branch-coverage status cell no longer names {missing}. "
+        f"Removing the measurement is only honest if the cell says what enforces the floor "
+        f"instead; a bare 'Met' is a verdict with no mechanism behind it."
     )
 
 
