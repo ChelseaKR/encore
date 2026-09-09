@@ -47,6 +47,7 @@ __all__ = [
     "PRIORITY_NORMAL",
     "PRIORITY_TIERS",
     "SECONDARY_TYPE_SLUGS",
+    "UNREADABLE_SECONDARY_TYPES",
     "ArtistWatchSettings",
     "SettingsError",
     "SettingsOverride",
@@ -58,6 +59,7 @@ __all__ = [
     "resolve_effective",
     "slug_for_primary",
     "slug_for_secondary",
+    "stored_secondary_types",
 ]
 
 
@@ -134,6 +136,50 @@ def group_type_tags(primary_type: str | None, secondary_types: tuple[str, ...]) 
     for raw in secondary_types:
         tags.append(slug_for_secondary(raw) or _slugify(raw))
     return tuple(dict.fromkeys(tags))
+
+
+# What a release-group's `secondary_types_json` reads as when the column cannot
+# be read back. Deliberately NOT `()`.
+#
+# `group_type_tags` above states the project's posture on a type it cannot
+# validate: it "survives as an opaque slug — [it] will never sit in a validated
+# allowlist, which is exactly how an unrecognized future type stays
+# conservative". An unreadable column is the same situation with less
+# information, and it was taking the opposite path. Every reader of the column
+# collapsed a corrupt blob to an empty tuple, and an empty tuple makes
+# `passes()` vacuously true on the secondary half — so a live album, a
+# compilation or a remix whose types could not be read cleared a filter the
+# user had set precisely to keep it out. A failed read was granting permission.
+#
+# This slug is not in `SECONDARY_TYPE_SLUGS` and cannot be put in an allowlist
+# by `parse_secondary_types`, so a group carrying it can never pass a secondary
+# filter. It stays conservative in the same way an unknown type does.
+UNREADABLE_SECONDARY_TYPES = "types-unreadable"
+
+
+def stored_secondary_types(raw: str | None) -> tuple[str, ...]:
+    """Read one release-group's stored secondary types. Three states, not two.
+
+    An absent or empty column means the group has no secondary types, which is
+    the ordinary case for a studio album. A column holding something this
+    reader cannot turn into a list of types is *not* that answer, and returning
+    `()` for it published a failed read as a fact about the release.
+
+    The same column had three behaviours across four call sites before this
+    existed: two silently returned `()` (channel routing and `settings
+    simulate`), and two called `json.loads` unguarded, so the upcoming-releases
+    view and `encore events` raised `JSONDecodeError` on a blob the other two
+    tolerated. One reader, one answer.
+    """
+    if raw is None or not raw.strip():
+        return ()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return (UNREADABLE_SECONDARY_TYPES,)
+    if not isinstance(parsed, list):
+        return (UNREADABLE_SECONDARY_TYPES,)
+    return tuple(str(item) for item in parsed)
 
 
 def parse_primary_types(raw: str) -> tuple[str, ...]:

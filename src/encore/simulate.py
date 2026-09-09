@@ -49,12 +49,15 @@ pass the window and the corpus.
 from __future__ import annotations
 
 import datetime as dt
-import json
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from encore.artistsettings import ArtistWatchSettings, SettingsOverride
+from encore.artistsettings import (
+    ArtistWatchSettings,
+    SettingsOverride,
+    stored_secondary_types,
+)
 from encore.channelroute import ChannelRoute, RoutableEvent, channel_accepts
 from encore.models import Artist, ReleaseGroup
 from encore.storage import Storage
@@ -407,16 +410,14 @@ def _counterfactual_kind(group: ReleaseGroup) -> str:
 
 
 def _secondary_types(group: ReleaseGroup) -> tuple[str, ...]:
-    """Read a group's stored secondary types, tolerating an unreadable blob."""
-    if not group.secondary_types_json:
-        return ()
-    try:
-        parsed = json.loads(group.secondary_types_json)
-    except json.JSONDecodeError:
-        return ()
-    if not isinstance(parsed, list):
-        return ()
-    return tuple(str(item) for item in parsed)
+    """Read a group's stored secondary types through the one shared reader.
+
+    This used to tolerate an unreadable blob by answering `()`, which made the
+    replay disagree with delivery in the one direction a simulation must not:
+    it showed a suppressed release passing. `stored_secondary_types` answers
+    with a slug no allowlist can contain instead.
+    """
+    return stored_secondary_types(group.secondary_types_json)
 
 
 def _observation(

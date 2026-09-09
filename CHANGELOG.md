@@ -58,6 +58,32 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stays `[]` because there it is a measurement ("MusicBrainz publishes none")
   rather than an absence. The published schema and `docs/webhooks.md` now say
   when the field is null.
+- **A failed read was granting permission: a release-group whose secondary types could
+  not be parsed cleared the type filter set to exclude it.**
+  `ReleaseGroup.secondary_types_json` was read in four places with three behaviours.
+  Channel routing (`Storage._routable_event`) and `encore settings simulate` caught
+  `json.JSONDecodeError` and answered `()`; the upcoming-releases query and the events
+  view called `json.loads` unguarded and raised on the same blob the other two tolerated.
+
+  The `()` answer is the one that mattered. `ArtistWatchSettings.passes` ends in
+  `all(tag in allow_secondary for tag in tags[1:])`, and `all(...)` over an empty
+  sequence is `True` — so a group with no secondary types clears the secondary half of
+  the filter on its primary type alone. A live album, a compilation or a remix whose
+  stored types could not be read therefore passed a filter the user had set to keep
+  exactly that out, and F10's whole point is that those defaults are quiet.
+
+  `artistsettings.group_type_tags` had already written down the right posture for this:
+  a type it cannot validate "survives as an opaque slug — [it] will never sit in a
+  validated allowlist, which is exactly how an unrecognized future type stays
+  conservative". An unreadable column is that case with less information, and it was
+  taking the opposite path. One reader, `stored_secondary_types`, now serves all four
+  call sites and answers with a slug no allowlist can contain, so an unreadable type set
+  fails closed the way an unknown type does. The two unguarded sites stop raising:
+  `encore feeds` and the iCal calendar no longer go down on one corrupt row.
+
+  A stored empty list stays empty on purpose — `[]` is what an ordinary studio album
+  records, and treating it as unreadable would suppress nearly everything. That boundary
+  has its own test and its own control.
 
 - **A corrupt evidence column explained as "this artist has never been matched".**
   `encore matches explain` opens with a rule in bold — *what was not recorded is
