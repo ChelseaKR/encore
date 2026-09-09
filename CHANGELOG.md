@@ -8,6 +8,56 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`docs/ROADMAP.md` §7 published a coverage percentage and a test count that
+  nothing derived, and both were wrong.** The branch-coverage row's status cell
+  read "Met (95.85% over 172 tests, covering F0-F4)". Measured 2026-09-09 on
+  `89e676d`: `make cov` reports **92.78%** branch coverage over **694** collected
+  tests. The percentage was stale *upward*, which is the direction that least
+  looks like it needs attention, and the count was low by roughly a factor of
+  four.
+
+  The cell now states what enforces the floor — `pyproject.toml`'s `fail_under`
+  and `make cov`'s `--cov-fail-under`, the same two sources the target column is
+  already derived from — and publishes no measurement of its own. That is the
+  cheaper of the two options #75 puts to the maintainer, and this repository has
+  already measured the cost of the other one: a figure that moves on every commit
+  and lives on one line of tracked prose is the collision that put `main` red in
+  #73, and coverage churns far more often than a test-module count does. If §7
+  should carry live values after all, the way in is a writer that runs the suite
+  and a `--check` half that gates, not a number retyped into the row.
+
+  `tests/test_published_claims.py` now holds the cell to that in both
+  directions: no percentage and no test count, and the two enforcement points it
+  names must be the two the build actually runs.
+
+- **A release MusicBrainz has not dated was published to subscribers as
+  `"first_release_date": ""`.** `docs/webhooks.md` promises that "a value the
+  record does not have is `null`, not missing", and `notify/webhook.py`'s own
+  docstring names reading absence as a value as "the defect class this project
+  spends most of its tests on". Two absences reached the builder spelled as an
+  empty string instead of `None`, and were passed through:
+  `first_release_date`, which `matching/mb.py` sets to `""` whenever
+  MusicBrainz publishes no date, and `artist_name`, whose lookup in
+  `storage.list_event_views` ends in `.get(group.artist_mbid, "")`.
+
+  An undated release group is an ordinary event, not an edge case:
+  `watch/engine.py::_kind_for_unseen` raises `release.new` for one by design,
+  and `RELEASE_EVENT_KINDS` says so in as many words. Measured on `origin/main`:
+  a view with `first_release_date=""` produced `""` in the envelope, while the
+  `channels test` fire sent `null` for the same key and `notify/render.py`
+  printed "date not announced" — three spellings of one fact, one of them a
+  value a subscriber's `date.fromisoformat` refuses and a template renders as a
+  blank.
+
+  Both keys are now `null` when empty. `test_absent_values_are_null_and_the_keys_stay`
+  had exercised only the two absences already spelled `None` (`primary_type`,
+  `links.plex`), so the two spelled `""` sat where that test could not reach
+  them; the new tests cover both, assert the property over every leaf in the
+  envelope rather than key by key, and pin the other direction — a real partial
+  date and a real name are not coerced, and an empty `secondary_types` list
+  stays `[]` because there it is a measurement ("MusicBrainz publishes none")
+  rather than an absence. The published schema and `docs/webhooks.md` now say
+  when the field is null.
 - **A failed read was granting permission: a release-group whose secondary types could
   not be parsed cleared the type filter set to exclude it.**
   `ReleaseGroup.secondary_types_json` was read in four places with three behaviours.

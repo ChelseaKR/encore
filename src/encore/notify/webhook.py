@@ -123,6 +123,31 @@ def event_envelope(
     ``links.plex`` is null before a Plex sync has run, because the deep link
     needs the server's machine identifier and one built from a guess goes
     nowhere -- the same rule ``encore.notify.render`` applies to the human text.
+
+    **Two absences reach this builder spelled as an empty string, not as
+    ``None``, and are converted here.** ``EventView`` types both as ``str``:
+
+    * ``first_release_date`` is ``""`` whenever MusicBrainz publishes no date
+      for the release group -- ``matching.mb._parse_release_group`` writes
+      ``""`` for a missing or non-string ``first-release-date``, and
+      ``watch.engine._kind_for_unseen`` deliberately emits a ``new`` event for
+      an undated group. So this is an ordinary event, not an edge case;
+    * ``artist_name`` is ``""`` when the display name cannot be resolved --
+      ``storage.list_event_views`` ends its lookup chain with
+      ``candidate_names.get(group.artist_mbid, "")``.
+
+    ``encore.notify.render`` already treats both as absences ("date not
+    announced", "Unknown artist"), and ``channel_test_envelope`` sends ``null``
+    for the same two keys. Only the release envelope published them verbatim,
+    so a subscriber following ``docs/webhooks.md`` -- "a value the record does
+    not have is ``null``" -- received ``""`` for a date nobody has announced.
+    An empty string is the value ``date.fromisoformat`` refuses and a template
+    prints as a blank.
+
+    Nothing else is coerced. ``secondary_types`` stays ``[]`` because an empty
+    list there means "MusicBrainz publishes none", which is a measurement; and
+    ``title`` has no empty-value branch anywhere in the codebase, so ``""``
+    there would be a defect to report rather than an absence to translate.
     """
     plex_link = (
         plex_artist_url(machine_identifier, view.plex_rating_key)
@@ -134,13 +159,13 @@ def event_envelope(
         "event_type": event_type_for(view.kind),
         "event_id": view.event_id,
         "occurred_at": _iso(view.created_at),
-        "artist": {"name": view.artist_name, "mbid": view.artist_mbid},
+        "artist": {"name": view.artist_name or None, "mbid": view.artist_mbid},
         "release_group": {
             "title": view.title,
             "mbid": view.release_group_mbid,
             "primary_type": view.primary_type,
             "secondary_types": list(view.secondary_types),
-            "first_release_date": view.first_release_date,
+            "first_release_date": view.first_release_date or None,
         },
         "links": {
             "cover_art": cover_art_url(view.release_group_mbid, base_url=cover_art_base_url),

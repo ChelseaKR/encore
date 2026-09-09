@@ -129,7 +129,7 @@ OCI image.
 
 | Metric | Gate | Target | Stage | Current status |
 |---|---|---|---|---|
-| Branch coverage | AUTO (CQ-08) | ≥85% | 4 | Met (95.85% over 172 tests, covering F0-F4) |
+| Branch coverage | AUTO (CQ-08) | ≥85% | 4 | Met — enforced here, not restated. `pyproject.toml` sets `fail_under` and `make cov` passes `--cov-fail-under`; the target column beside this one is derived from both and goes red if they disagree (`tests/test_published_claims.py`). A measured percentage and a test count are deliberately absent from this cell: both move on every commit, nothing in the tree recomputes them, and this row published a stale pair of them for months (#75). The current figures are in `make cov`'s own output and in the coverage report CI uploads |
 | mypy --strict errors | AUTO (CQ-06) | 0 | 3 | Met |
 | ruff (format+lint) | AUTO (CQ-04) | 0 findings | 1–2 | Met |
 | Semgrep HIGH/CRIT | AUTO (SEC-07) | 0 | 5 | Met — pinned Semgrep scans `p/default`, `p/python`, and Encore's no-sensitive-values-in-logs rule in `make security`; the committed waiver ledger is empty |
