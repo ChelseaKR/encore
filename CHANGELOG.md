@@ -8,6 +8,38 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The Stage 9 CVE gate graded a Docker layer cache instead of the tree, and
+  blocked pushes CI would have accepted.** `make container-build` ran a plain
+  `docker build`. On CI that is honest by accident: an ephemeral runner has no
+  image store and no BuildKit layer cache, so `FROM python:3.12-slim` is resolved
+  from the registry and the Dockerfile's `apt-get update && apt-get upgrade -y`
+  runs against Debian's archive as it stands that minute. On a contributor's
+  machine neither cache expires on the thing that moves — the tag resolves to
+  whatever copy is already local, and the apt layer's cache key is (parent image
+  id, command string), which a Debian security upload does not change. The layer
+  is reused indefinitely and the scan grades a package set frozen at whenever the
+  cache was filled.
+
+  Measured 2026-09-13 on `df69b27`, one tree and two builds. Cached: a
+  `debian 13.6` image, and `make container-scan` exit 1 on **12 fixed-available
+  findings** — `perl-base` CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376
+  (CRITICAL), plus CVE-2026-42497, CVE-2026-48962, CVE-2026-57432, CVE-2026-57433
+  (`perl-base`), CVE-2026-41992 (`gzip`), CVE-2026-86145 and CVE-2026-89161
+  (`libpcre2-8-0`), CVE-2026-11822 and CVE-2026-11824 (`libsqlite3-0`).
+  `--pull --no-cache`: `debian 13.7`, **0 findings**, exit 0. Same commit,
+  opposite verdict — and the failing direction is the expensive one, because it
+  stops a push over packages the shipped image would never have contained.
+
+  `container-build` now passes `--pull --no-cache`. `--pull` alone does not close
+  it: with the base tag's digest unchanged the apt layer still reports `CACHED`,
+  measured the same day. A cold build costs ~14s here, and both flags are no-ops
+  in CI, which has nothing to reuse — so this is the local gate being made to
+  agree with the remote one, not a second implementation of it.
+
+  `tests/test_published_claims.py` reads the flags back off the `container-build`
+  recipe, so dropping either one fails the suite rather than quietly restoring a
+  gate whose verdict tracks the age of a cache.
+
 - **`docs/ROADMAP.md` §7 published a coverage percentage and a test count that
   nothing derived, and both were wrong.** The branch-coverage row's status cell
   read "Met (95.85% over 172 tests, covering F0-F4)". Measured 2026-09-09 on
