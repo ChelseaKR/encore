@@ -137,6 +137,28 @@ todo-gate: ## Fail on TODO/FIXME/HACK with no author + issue-or-milestone ref (C
 # gate with a real failure history was the one a contributor could not run.
 # Keep these flags identical to ci.yml's trivy-action inputs: divergence here
 # recreates exactly the drift this closes.
+#
+# `container-build` passes `--pull --no-cache` for the same reason. CI runs this
+# target on an ephemeral runner with no image store and no BuildKit layer cache,
+# so every CI build resolves `python:3.12-slim` from the registry and re-runs the
+# Dockerfile's `apt-get update && apt-get upgrade -y` against Debian's archive as
+# it stands that minute. A contributor's machine has both caches, and neither
+# expires on the thing that actually moves: `FROM python:3.12-slim` resolves to
+# whatever copy of the tag is already local, and the apt layer's cache key is
+# (parent image ID, command string) — a Debian security upload changes neither,
+# so that layer is reused indefinitely and the local gate scans a package set
+# frozen at whenever the cache was filled.
+#
+# Measured 2026-09-13 at df69b27 — one tree, two builds. Cached: a debian 13.6
+# image, `container-scan` reporting 12 fixed-available findings (3 CRITICAL,
+# including perl-base CVE-2026-13221) and exit 1. `--pull --no-cache`: debian
+# 13.7, 0 findings, exit 0. Same commit, opposite verdict; the local gate was
+# reporting the age of a cache rather than the state of the tree, and it fails in
+# the direction that blocks pushes CI would have accepted.
+#
+# `--pull` alone does not close it: with the base tag's digest unchanged the apt
+# layer still reports CACHED (measured the same day). A cold build costs ~14s,
+# and both flags are no-ops in CI, which has nothing to reuse.
 # ---------------------------------------------------------------------------
 
 # Overridable so a caller can scan a specific build without clobbering a tag.
@@ -156,7 +178,7 @@ container-tools: ## Fail closed when the Stage 9 toolchain is absent (never skip
 	  echo "  scan is merge-blocking in ci.yml and must be reproducible locally." >&2; exit 1; }
 
 container-build: container-tools ## Build the OCI image (proves the Dockerfile builds)
-	docker build -t $(IMAGE) .
+	docker build --pull --no-cache -t $(IMAGE) .
 
 container-scan: container-build ## Trivy CVE scan — CRITICAL/HIGH, fixed-only (SEC-28)
 	trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
