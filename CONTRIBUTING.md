@@ -49,7 +49,16 @@ in CI, so it is worth having locally rather than discovering it on a pull reques
 
 ## The merge gate
 
-A change merges when the full gate is green. Reproduce it locally with:
+CI runs the full gate on every pull request, and a change is meant to merge only
+when it is green. That is a convention this project holds itself to, not a
+control. `main` carries the `protect-main` ruleset, which blocks deletion and
+non-fast-forward pushes and carries **no required status check** — so a red run
+does not stop a merge, and nothing on GitHub stops a direct push or a self-merge
+either. [ADR 0010](docs/adr/0010-branch-protection-deferred-private-repo.md) is
+the decision and the measurement behind it; making these jobs required status
+checks is a live repository setting that remains the maintainer's call.
+
+Reproduce the gate locally with:
 
 ```sh
 make verify
