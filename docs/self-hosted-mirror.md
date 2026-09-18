@@ -35,7 +35,7 @@ somebody exported a variable is a failure encore should not be able to have.
 Raising the rate means running a mirror; there is no other door.
 
 **encore never silently falls back to the public host.** A base URL that is
-malformed, or that carries a credential (`https://user:pass@host/ws/2` is
+malformed, or that carries a credential (`https://<user>:<password>@<host>/ws/2` is
 refused outright, and never echoed into a log or a health check), is an error.
 A mirror that does not answer, or that answers something other than the
 MusicBrainz web service, makes `/readyz` unready with the reason and stops
