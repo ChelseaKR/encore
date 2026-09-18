@@ -6,7 +6,7 @@
 # Recorded with F4 (2026-08-01) rather than after it, so the commitment predates
 # the metrics surface. Not yet enforced by an alert: encore emits no metrics
 # endpoint until the M2 routes land, so the query below is a documented
-# placeholder shape, exactly as `encore.yaml`'s is. The *behaviour* it measures
+# placeholder shape, exactly as `encore.yaml`'s is. The *behavior* it measures
 # is already implemented and unit-tested (bounded retry with exponential
 # backoff, per-channel failure isolation, channel health surfaced in
 # `encore channels list`) — see docs/adr/0012.

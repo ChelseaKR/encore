@@ -23,7 +23,7 @@ primary channel today: the repo is private, and GitHub's private vulnerability
 reporting ("Report a vulnerability" under the *Security* tab) is not functional on
 a private free-plan repo. Once the repo is public, GitHub PVR becomes the preferred
 channel and this section will be reordered (tracked in the roadmap, DOC-09).
-Expect an acknowledgement within a few days; this is a volunteer project, so please
+Expect an acknowledgment within a few days; this is a volunteer project, so please
 be patient and do not disclose publicly until a fix is available.
 
 ### Redaction-safe reporting (please read)

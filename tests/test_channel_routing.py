@@ -171,7 +171,7 @@ def test_an_explicitly_empty_list_is_refused() -> None:
         parse_route_json(json.dumps({"priority": []}))
 
 
-def test_every_route_key_is_actually_honoured_by_the_predicate() -> None:
+def test_every_route_key_is_actually_honored_by_the_predicate() -> None:
     """A key the parser accepts and the predicate ignores is a rule that lies.
 
     Walks `ROUTE_KEYS`, builds a route naming a value the event does not have,
@@ -190,7 +190,7 @@ def test_every_route_key_is_actually_honoured_by_the_predicate() -> None:
     assert set(mismatches) == set(ROUTE_KEYS), "a route key has no case here"
     baseline = _event(priority="normal", primary_type="Album", secondary_types=())
     for key, route in mismatches.items():
-        assert not channel_accepts(baseline, route), f"route key {key!r} is not honoured"
+        assert not channel_accepts(baseline, route), f"route key {key!r} is not honored"
 
 
 # --- Canonicalization ---------------------------------------------------------
@@ -211,7 +211,7 @@ def test_a_route_round_trips_through_its_stored_form() -> None:
     assert parse_route_json(canonical_route_json(route)) == route
 
 
-# --- Fan-out: a routed-away event is never materialised ------------------------
+# --- Fan-out: a routed-away event is never materialized ------------------------
 
 
 def _seed_artist(
@@ -258,7 +258,7 @@ def _deliveries_for(storage: Storage, event_id: int) -> set[str]:
     return {names[row.channel_id] for row in rows}
 
 
-def test_a_routed_away_event_is_never_materialised(tmp_path: Path) -> None:
+def test_a_routed_away_event_is_never_materialized(tmp_path: Path) -> None:
     """#65's fixture clause, end to end through the real fan-out.
 
     Two channels, one routed to instant priority. An instant-artist event

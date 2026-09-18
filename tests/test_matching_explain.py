@@ -291,7 +291,7 @@ class TestTheRenderers:
         assert document["schema"] == "encore.matches.explain/1"
         assert document["reason"] == row.decision_reason
         assert document["candidates"][0]["terms"], "the JSON dropped the breakdown"
-        json.dumps(document)  # must be serialisable as-is
+        json.dumps(document)  # must be serializable as-is
 
     def test_the_text_report_names_the_threshold_as_current_not_historical(
         self, storage: Storage, httpx_mock: HTTPXMock

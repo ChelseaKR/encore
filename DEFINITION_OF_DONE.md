@@ -76,7 +76,7 @@ target values live in [`docs/ROADMAP.md`](docs/ROADMAP.md).
   | Reliability | fault tolerance — MB/LB backoff, skip-don't-queue after downtime |
   | Security | confidentiality — token/URL encryption at rest; no exfiltration |
   | Maintainability | modularity — independent sync·match·watch·notify·recommend |
-  | Performance efficiency | time behaviour — rate-budget math holds at 1,000-artist scale |
+  | Performance efficiency | time behavior — rate-budget math holds at 1,000-artist scale |
   | Compatibility | interoperability — Apprise fan-out, RSS/iCal standards compliance |
   | Usability | accessibility — WCAG 2.2 AA; learnability — 10-minute onboarding |
   | Portability | adaptability — Plex today, adapter interface designed for Jellyfin/Navidrome (F12) |

@@ -5,7 +5,7 @@ a broken gate would not show up until a Sunday, and then only as a green check.
 These tests run on every PR. They pin both halves of the gate.
 
 * It still fails. An allowlist entry covers one detector, one commit, one path
-  and one value. A neighbouring commit, file or credential fails. So does a
+  and one value. A neighboring commit, file or credential fails. So does a
   scan that errored, read nothing, or lost its output.
 * It is still the whole-history, all-tier scan. The workflow must not pick up a
   path exclusion, a scan base or `--only-verified`. Any of those makes the
@@ -103,7 +103,7 @@ def test_an_unlisted_finding_fails_and_prints_its_fingerprint(
 
 
 @pytest.mark.parametrize(
-    "neighbour",
+    "neighbor",
     [
         _result(commit=OTHER_COMMIT),  # the same value, committed again later
         _result(path="src/encore/other.py"),  # the same value, in another file
@@ -112,8 +112,8 @@ def test_an_unlisted_finding_fails_and_prints_its_fingerprint(
     ],
     ids=["other-commit", "other-path", "other-value", "commit-message"],
 )
-def test_an_entry_covers_nothing_next_to_it(tmp_path: Path, neighbour: str) -> None:
-    assert _run(tmp_path, [_result(), neighbour], _entry(), FOUND_EXIT) == 1
+def test_an_entry_covers_nothing_next_to_it(tmp_path: Path, neighbor: str) -> None:
+    assert _run(tmp_path, [_result(), neighbor], _entry(), FOUND_EXIT) == 1
 
 
 def test_a_stale_entry_warns_but_does_not_fail(

@@ -247,7 +247,7 @@ def _build_parser() -> argparse.ArgumentParser:
     matches_score.add_argument(
         "--partial",
         action="store_true",
-        help="Score the labelled rows even when some are unlabelled (states the gap).",
+        help="Score the labeled rows even when some are unlabeled (states the gap).",
     )
     matches_score.add_argument(
         "--json", action="store_true", dest="as_json", help="Emit the report as JSON."

@@ -119,7 +119,7 @@ X-Encore-Signature: t=<unix seconds>,v1=<hex>
 
 where `<hex>` is `HMAC-SHA256(secret, "<t>." + raw_request_body)`.
 
-Sign and compare the **raw bytes you received**, not a re-serialisation of the
+Sign and compare the **raw bytes you received**, not a re-serialization of the
 parsed JSON. Encore emits a canonical body — sorted keys, compact separators,
 UTF-8 — so the bytes are stable, but any re-encoding on your side may not
 reproduce them, and then a valid signature fails for no reason a user can see.

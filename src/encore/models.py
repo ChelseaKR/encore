@@ -249,7 +249,7 @@ class NotificationChannel(SQLModel, table=True):
     url_cipher: bytes
     # Which sender puts this channel's payload on the wire (issue #56). Defaults
     # to "apprise", so a database written before webhooks existed migrates to
-    # exactly the behaviour it already had.
+    # exactly the behavior it already had.
     kind: str = Field(default=CHANNEL_KIND_APPRISE, index=True)
     # The webhook channel's HMAC shared secret, Fernet-encrypted under the same
     # scheme as the URL and the Plex token (docs/adr/0008). NULL for every

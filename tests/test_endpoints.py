@@ -5,7 +5,7 @@ Two rules carry this file, and both are refusals rather than features.
 **The public host is pinned at 1 req/s whatever the operator sets.** An
 installation that hammers donation-funded infrastructure because somebody
 exported a variable is a failure encore should not be able to have, so
-`ENCORE_MB_RATE_LIMIT` is honoured only against a mirror — and the discarded
+`ENCORE_MB_RATE_LIMIT` is honored only against a mirror — and the discarded
 value is *named*, in `encore doctor` and in the startup log, because silently
 ignoring configuration is how an afternoon disappears.
 
@@ -108,7 +108,7 @@ def test_an_unconfigured_install_reads_the_public_metabrainz_endpoints() -> None
     assert resolved.notes == ()
 
 
-def test_a_configured_mirror_is_used_and_recognised_as_one(
+def test_a_configured_mirror_is_used_and_recognized_as_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(MB_BASE_URL_ENV, MIRROR + "/")
@@ -142,7 +142,7 @@ def test_the_public_host_ignores_an_operator_rate_and_says_which_one(
     assert "25" in ignored[0] and MB_BASE_URL_ENV in ignored[0]
 
 
-def test_a_mirror_honours_the_configured_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_mirror_honors_the_configured_rate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(MB_BASE_URL_ENV, MIRROR)
     monkeypatch.setenv(MB_RATE_LIMIT_ENV, "20")
     resolved = resolve_endpoints()
