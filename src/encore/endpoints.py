@@ -7,7 +7,7 @@ already existed as module constants; this module is the operator-facing
 configuration around them, plus the two rules that keep it safe.
 
 **Rule one: the public host is pinned at 1 req/s, whatever the operator
-sets.** `ENCORE_MB_RATE_LIMIT` is honoured only when the configured
+sets.** `ENCORE_MB_RATE_LIMIT` is honored only when the configured
 MusicBrainz host is not MetaBrainz's own. Against `musicbrainz.org` the
 operator's value is discarded and said so, once, rather than quietly
 obeyed — an installation that hammers donation-funded infrastructure
@@ -233,7 +233,7 @@ def _resolve_rate_limit(raw: str, *, is_mirror: bool) -> tuple[float, str | None
             f"{MB_RATE_LIMIT_ENV}={value} is outside (0, {MAX_MIRROR_RATE_LIMIT:g}]; falling "
             f"back to the safe {PUBLIC_MB_RATE_LIMIT:g} req/s.",
         )
-    return parsed, f"{MB_RATE_LIMIT_ENV}={parsed:g} req/s honoured (mirror, not the public host)"
+    return parsed, f"{MB_RATE_LIMIT_ENV}={parsed:g} req/s honored (mirror, not the public host)"
 
 
 def resolve_endpoints(environ: Mapping[str, str] | None = None) -> Endpoints:

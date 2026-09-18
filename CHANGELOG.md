@@ -25,7 +25,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unfiltered and `scripts/trufflehog_gate.py` grades its JSON output against
   `.github/trufflehog-allowlist.toml`. An entry there is one detector, one full
   commit SHA, one path ("" for the commit message) and the SHA-256 of one
-  matched value. A neighbouring commit, file or value fails. So does a scan
+  matched value. A neighboring commit, file or value fails. So does a scan
   that errored, read zero chunks, or reports a verdict its output does not back.
   The tier (`verified,unknown,unverified`), the Lob-only detector exclusion and
   the TruffleHog version (3.95.8, now also pinned by digest) are unchanged. At
@@ -151,7 +151,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   repositories. Confirmed against the API: `GET /repos/ChelseaKR/encore/code-scanning/alerts`
   answers `404 "no analysis found"`, which is what an *available* code-scanning setup with
   nothing uploaded returns; a repository without it answers `403`. So the setting was not a
-  constraint being respected, it was ten weeks of analyses written to a runner and thrown
+  constraint being respected, it was ten weeks of analyzes written to a runner and thrown
   away: no alert, no history, no dismissal record, nothing to compare a new finding against.
   The second stale claim in the same header — "the account-wide Actions budget block still
   prevents jobs from starting" — is contradicted by this workflow's own green runs on `main`.
@@ -272,7 +272,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   something that never signs anything.
 
   Schema v14 adds `channels.kind` (defaulting to `apprise`, so an existing database
-  migrates to exactly the behaviour it had) and `channels.secret_cipher`. The new
+  migrates to exactly the behavior it had) and `channels.secret_cipher`. The new
   ciphertext column is registered with `encore backup`'s key-pairing probes, which is
   a gate this repository already had and which caught its own omission.
 
@@ -297,7 +297,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against an event-log implementation.
 
   **The blind spot is named rather than papered over.** An artist's first poll is silent
-  under every policy (ADR-0011), so a back catalogue first seen inside the simulated window
+  under every policy (ADR-0011), so a back catalog first seen inside the simulated window
   cannot be replayed at all. Rather than guess at a tolerance for "which rows belong to the
   baseline poll", the test is exact: an artist whose earliest recorded group falls inside
   the window was baselined inside it, and its observations are excluded and counted, with
@@ -318,7 +318,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   baselined-in-window artist as ordinary, checking muting before the type filter, dropping
   a zero-delivery channel from the table, ignoring the channel-age rule, and hiding the
   quiet-day count. Two of them initially failed to go red — the tests did not cover those
-  behaviours — which is what negative controls are for; the missing tests were added and
+  behaviors — which is what negative controls are for; the missing tests were added and
   all six now fail as they should.
 
   `Storage.effective_watch_settings_for_mbids` gains an optional `defaults` argument so the
@@ -336,10 +336,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tallies it by decision status, and reports the rate.
 
   It is strict in three specific places, each of which is a way to publish an
-  absence as a measurement. **An unlabelled row is not a data point:** `correct:
+  absence as a measurement. **An unlabeled row is not a data point:** `correct:
   null` means nobody has looked yet, so it enters neither the numerator nor the
   denominator, and the report states how many there were rather than quietly
-  shrinking the sample. **A rate over a partly-labelled sheet is not printed at
+  shrinking the sample. **A rate over a partly-labeled sheet is not printed at
   all** unless `--partial` asks for it by name, and then it carries its own gap
   and an explicit note that it is not the U8 figure. **A label that is not a
   boolean is refused by line number, not coerced** — `"correct": "yes"` is truthy
@@ -354,16 +354,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   matcher made without asking, how many were right — and only `auto` rows enter
   that denominator; folding in `manual`, `pending` or `skipped` rows would move
   the number without measuring anything. "How many artists auto-matched at all"
-  is a genuinely useful second figure and is labelled as coverage.
+  is a genuinely useful second figure and is labeled as coverage.
 
   Six negative controls were run against the guards rather than only asserted:
-  coercing a non-boolean label by truthiness, counting unlabelled rows in the
+  coercing a non-boolean label by truthiness, counting unlabeled rows in the
   denominator, publishing a rate over an incomplete sheet, letting an empty tally
   claim to be complete, summing every status into the auto denominator, and
   accepting an unknown status. Each was applied to the source, confirmed present
   in the file, run red, and restored byte-identically.
 
-  Nothing here decides whether the criterion is met. The library, the labelling
+  Nothing here decides whether the criterion is met. The library, the labeling
   pass, and the call that follows it — rebalance the threshold or freeze it —
   stay with the maintainer, per `docs/adr/0006`.
 
@@ -377,7 +377,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   this repository treats as its worst case. It now lists those files on stderr, as a
   note and not a finding: the exit status is still 0, because the inventory is still
   correct for the commit, and nothing reaches the rendered block. `--exclude-standard`
-  honours `.gitignore`, so build artifacts are out by construction rather than by a
+  honors `.gitignore`, so build artifacts are out by construction rather than by a
   hand-maintained list. Two tests hold both directions — the note fires and names the
   file while `render()` stays byte-identical, and a clean tree gets no note, because a
   warning that always prints is a warning nobody reads.
@@ -389,17 +389,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Fan-out was all-or-nothing: every enabled channel got every deliverable
   event, so a loud phone channel and a quiet email digest could not coexist
   without muting artists globally. F10 gave artists priority tiers precisely so
-  heavy-rotation favourites could break through; this is the channel-side half
+  heavy-rotation favorites could break through; this is the channel-side half
   of that design. A route may name `priority`, `primary_types`,
   `secondary_types`, `library_keys`, `artist_keys` and `sources`; the rule is
   evaluated after F10 has decided an event is deliverable and before fan-out,
-  so a routed-away event is never materialised for that channel. Feeds are
+  so a routed-away event is never materialized for that channel. Feeds are
   unaffected — routing, like muting, suppresses deliveries only (ADR-0012).
 
   **An absent key means "all", so an unrouted channel behaves exactly as it did
   before this existed.** `ChannelRoute()` is the identity predicate and a
   migrated database gets `route_json = NULL`, which is today's fan-out. A test
-  walks every route key and fails if one is parsed but not honoured — a filter
+  walks every route key and fails if one is parsed but not honored — a filter
   the schema accepts and the predicate ignores is a rule that lies.
 
   **A rule that could never match is refused when it is written.** An unknown
@@ -648,7 +648,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     has. What genuinely did not survive is the *ranking*: the ordering rationale
     and the cut list are not reconstructible, and the section says so instead of
     implying it is a prioritization.
-  - **§4 is relabelled a premise, not research.** Its market claim — no free
+  - **§4 is relabeled a premise, not research.** Its market claim — no free
     tool combines Plex-native sync, release alerts and recommendations without
     being built around downloading — rested entirely on an unpublished scan, so
     its per-claim verification statuses and its `2026-07-05` currency stamp
@@ -683,7 +683,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from a clean checkout, so `make docs-audit-check` disagreed with itself across
   two checkouts of the *same commit*, in the one gate whose whole purpose is
   byte-equality with what the commit produces. `EXCLUDED_DIR_NAMES` was the
-  hand-maintained defence and could only ever list the build artifacts someone
+  hand-maintained defense and could only ever list the build artifacts someone
   had already been bitten by; an arbitrary untracked file was never in reach.
 
   `tests/test_doc_audit.py::test_every_authored_doc_is_tracked_by_git` had

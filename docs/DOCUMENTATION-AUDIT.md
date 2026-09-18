@@ -12,7 +12,7 @@ This audit records the documentation sweep and remediation loop for this reposit
 > generator cannot know.
 >
 > That split is deliberate, and so is the warning that comes with it. A generated block
-> legitimises whatever the tree currently says, including damage: if hand-authored prose
+> legitimizes whatever the tree currently says, including damage: if hand-authored prose
 > outside the markers is deleted and the links in it go with it, regeneration will make
 > the link count agree with the loss and report `pass`. Review the prose in a diff, not
 > by trusting the block.

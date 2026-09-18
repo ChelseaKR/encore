@@ -44,7 +44,7 @@ jobs:
           #
           # The pin still matters. The action's `version` input defaulted to
           # "latest", so SHA-pinning the action did not pin what scanned, and this
-          # gate once changed behaviour with no commit here: upstream published
+          # gate once changed behavior with no commit here: upstream published
           # 3.96.0 and the next run picked it up. Neither Renovate nor Dependabot
           # can see this line, so bump it by hand, tag and digest together. The
           # digest is the multi-arch index that 3.95.8 resolved to on the runner

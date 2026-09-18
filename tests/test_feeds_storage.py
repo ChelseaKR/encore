@@ -178,7 +178,7 @@ def test_upcoming_carries_secondary_types_through_to_the_view(tmp_path: Path) ->
     # The JSON-encoded column must come back as the tuple the renderer needs,
     # or every announced live record silently becomes a plain "Album".
     # `live` and `compilation` are opted in explicitly: since issue #34 the
-    # calendar honours the F10 type policy, and under the albums-only default
+    # calendar honors the F10 type policy, and under the albums-only default
     # this group is correctly absent — which is what this test used to prove
     # was broken without meaning to.
     storage = Storage(tmp_path)

@@ -10,11 +10,11 @@ reading it.
 This module is the other half. It is deliberately strict about three things,
 because each of them is a way to publish an absence as a measurement:
 
-**An unlabelled row is not a data point.** ``correct: null`` means "nobody
+**An unlabeled row is not a data point.** ``correct: null`` means "nobody
 has looked at this yet", which is a different fact from "this decision was
 wrong" and from "this decision was right". It enters neither the numerator
 nor the denominator, and the report says how many there were. A rate over a
-partly-labelled sheet is reported only when it is asked for by name
+partly-labeled sheet is reported only when it is asked for by name
 (``--partial``) and never without its coverage stated alongside it.
 
 **A label that is not a boolean is not a label.** ``"correct": "yes"`` is
@@ -26,7 +26,7 @@ from — bad JSON, a non-object, an unknown ``status``.
 §7 metrics table both ask for auto-match *precision*: of the decisions the
 matcher made without asking, how many were right. "How many artists
 auto-matched at all" is a useful figure too, and it is not that one, so it
-is reported separately and labelled. Only ``auto`` rows enter the precision
+is reported separately and labeled. Only ``auto`` rows enter the precision
 denominator — folding ``manual``, ``pending`` or ``skipped`` rows into it
 would move the rate without measuring anything.
 
@@ -75,41 +75,41 @@ class UnreadableLine:
 
 @dataclass(frozen=True)
 class StatusTally:
-    """How one decision status was labelled across the sheet."""
+    """How one decision status was labeled across the sheet."""
 
     correct: int = 0
     incorrect: int = 0
-    unlabelled: int = 0
+    unlabeled: int = 0
 
     @property
     def total(self) -> int:
-        """Every readable row with this status, labelled or not."""
-        return self.correct + self.incorrect + self.unlabelled
+        """Every readable row with this status, labeled or not."""
+        return self.correct + self.incorrect + self.unlabeled
 
     @property
-    def labelled(self) -> int:
+    def labeled(self) -> int:
         """Rows a human has actually judged."""
         return self.correct + self.incorrect
 
     @property
-    def is_fully_labelled(self) -> bool:
+    def is_fully_labeled(self) -> bool:
         """Whether every row of this status carries a label.
 
-        A status with no rows at all is *not* fully labelled: there is
-        nothing to have labelled, and answering "yes" would let an empty
+        A status with no rows at all is *not* fully labeled: there is
+        nothing to have labeled, and answering "yes" would let an empty
         sheet report a complete measurement.
         """
-        return self.total > 0 and self.unlabelled == 0
+        return self.total > 0 and self.unlabeled == 0
 
     def rate(self) -> float | None:
-        """Correct share of the labelled rows, or ``None`` when none are.
+        """Correct share of the labeled rows, or ``None`` when none are.
 
         ``None`` rather than ``0.0``: no labels is not a score of zero, and
         the two must not render the same way.
         """
-        if self.labelled == 0:
+        if self.labeled == 0:
             return None
-        return self.correct / self.labelled
+        return self.correct / self.labeled
 
 
 @dataclass(frozen=True)
@@ -131,7 +131,7 @@ class AuditScore:
         return self.tallies.get(AUTO_MATCH_STATUS, StatusTally())
 
     def precision(self) -> float | None:
-        """Auto-match precision over labelled ``auto`` rows, or ``None``."""
+        """Auto-match precision over labeled ``auto`` rows, or ``None``."""
         return self.auto.rate()
 
     def coverage(self) -> float | None:
@@ -149,9 +149,9 @@ class AuditScore:
 def _read_correct(payload: dict[str, object]) -> tuple[bool | None, str | None]:
     """Read one row's ``correct`` field, refusing anything that is not a label.
 
-    Absent and ``null`` both mean unlabelled — `audit_record` writes the key
+    Absent and ``null`` both mean unlabeled — `audit_record` writes the key
     explicitly as null, and an older sheet may not carry it at all; neither
-    is a judgement. Every other type is refused rather than coerced: a bare
+    is a judgment. Every other type is refused rather than coerced: a bare
     string, a 0/1, or a "y" would all evaluate as truthy or falsy in Python
     and silently become a data point nobody entered.
     """
@@ -217,7 +217,7 @@ def score_audit(text: str) -> AuditScore:
         else:
             bucket[1] += 1
     tallies = {
-        status: StatusTally(correct=values[0], incorrect=values[1], unlabelled=values[2])
+        status: StatusTally(correct=values[0], incorrect=values[1], unlabeled=values[2])
         for status, values in counters.items()
     }
     return AuditScore(
@@ -243,7 +243,7 @@ def _status_lines(score: AuditScore) -> list[str]:
         lines.append(
             f"  {status:<8} {tally.total:>5} {noun} — "
             f"{tally.correct} correct, {tally.incorrect} wrong, "
-            f"{tally.unlabelled} unlabelled"
+            f"{tally.unlabeled} unlabeled"
         )
     return lines
 
@@ -258,21 +258,21 @@ def _precision_lines(score: AuditScore, *, partial: bool) -> list[str]:
             " not evidence for or against the U8 criterion.",
         ]
     rate = auto.rate()
-    if auto.is_fully_labelled and rate is not None:
+    if auto.is_fully_labeled and rate is not None:
         met = "met" if rate >= FIELD_PRECISION_TARGET else "NOT met"
         return [
-            f"Auto-match precision: {auto.correct} of {auto.labelled} auto decisions"
+            f"Auto-match precision: {auto.correct} of {auto.labeled} auto decisions"
             f" correct — {_percent(rate)}.",
-            "  Every auto decision in this sheet is labelled.",
+            "  Every auto decision in this sheet is labeled.",
             f"  M1 exit (U8) asks for ≥{_percent(FIELD_PRECISION_TARGET)}: {met} on this sample.",
         ]
     if not partial:
         return [
-            f"Auto-match precision: not reported — {auto.unlabelled} of {auto.total}"
-            " auto decisions are unlabelled.",
-            "  A rate over a partly-labelled sample is not the U8 figure. Fill in"
+            f"Auto-match precision: not reported — {auto.unlabeled} of {auto.total}"
+            " auto decisions are unlabeled.",
+            "  A rate over a partly-labeled sample is not the U8 figure. Fill in"
             " the remaining `correct` fields,",
-            "  or pass --partial to score only the ones that are labelled.",
+            "  or pass --partial to score only the ones that are labeled.",
         ]
     if rate is None:
         return [
@@ -281,9 +281,9 @@ def _precision_lines(score: AuditScore, *, partial: bool) -> list[str]:
             "  There is nothing to score. --partial does not invent a denominator.",
         ]
     return [
-        f"Auto-match precision (partial): {auto.correct} of {auto.labelled} labelled"
+        f"Auto-match precision (partial): {auto.correct} of {auto.labeled} labeled"
         f" auto decisions correct — {_percent(rate)}.",
-        f"  {auto.unlabelled} of {auto.total} auto decisions are unlabelled and are"
+        f"  {auto.unlabeled} of {auto.total} auto decisions are unlabeled and are"
         " counted in neither half.",
         "  This is not the U8 figure: that criterion is a claim about the whole sample.",
     ]
@@ -329,8 +329,10 @@ def report_payload(score: AuditScore, *, partial: bool = False) -> dict[str, obj
     rather than a number it would have to know not to trust.
     """
     auto = score.auto
-    reportable = auto.is_fully_labelled or (partial and auto.labelled > 0)
+    reportable = auto.is_fully_labeled or (partial and auto.labeled > 0)
     rate = auto.rate() if reportable else None
+    # The "unlabelled"/"auto_labelled"/"auto_unlabelled" keys keep their British spelling:
+    # they are the --json output format that callers script against.
     return {
         "lines_seen": score.lines_seen,
         "rows_read": score.rows_read,
@@ -342,18 +344,18 @@ def report_payload(score: AuditScore, *, partial: bool = False) -> dict[str, obj
                 "total": tally.total,
                 "correct": tally.correct,
                 "incorrect": tally.incorrect,
-                "unlabelled": tally.unlabelled,
+                "unlabelled": tally.unlabeled,
             }
             for status, tally in sorted(score.tallies.items())
         },
         "auto_total": auto.total,
-        "auto_labelled": auto.labelled,
-        "auto_unlabelled": auto.unlabelled,
+        "auto_labelled": auto.labeled,
+        "auto_unlabelled": auto.unlabeled,
         "precision": rate,
-        "precision_is_partial": bool(rate is not None and not auto.is_fully_labelled),
+        "precision_is_partial": bool(rate is not None and not auto.is_fully_labeled),
         "precision_target": FIELD_PRECISION_TARGET,
         "meets_target": (
-            rate >= FIELD_PRECISION_TARGET if rate is not None and auto.is_fully_labelled else None
+            rate >= FIELD_PRECISION_TARGET if rate is not None and auto.is_fully_labeled else None
         ),
         "coverage": score.coverage(),
     }

@@ -253,7 +253,7 @@ def _migration_0013_channel_routes(connection: Connection) -> None:
     """v13: add ``channels.route_json`` — per-channel routing rules (issue #65).
 
     NULL means "this channel takes everything", which is exactly today's
-    fan-out, so an existing database migrates to identical behaviour.
+    fan-out, so an existing database migrates to identical behavior.
     Guarded: no-op on fresh, ALTER on an existing table.
     """
     SQLModel.metadata.create_all(connection)
@@ -266,7 +266,7 @@ def _migration_0014_webhook_channels(connection: Connection) -> None:
     """v14: add ``channels.kind`` and ``channels.secret_cipher`` (issue #56).
 
     ``kind`` defaults to ``'apprise'``, so an existing database migrates to
-    exactly the behaviour it already had: every channel it holds was an Apprise
+    exactly the behavior it already had: every channel it holds was an Apprise
     destination and stays one. ``secret_cipher`` is NULL for those, because only
     a webhook channel signs anything.
 
@@ -1105,7 +1105,7 @@ class Storage:
         """Insert absent (event, channel) rows; return how many were created.
 
         A channel whose route declines this event gets no row at all — the
-        event is never materialised for it, so it cannot later be retried,
+        event is never materialized for it, so it cannot later be retried,
         counted, or reported as suppressed. That is the F10 shape: routing,
         like muting, silences deliveries and leaves the feeds complete.
         """

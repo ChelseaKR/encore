@@ -21,7 +21,7 @@ cannot be recomputed — that is said in one line, not filled in with defaults
 that would produce a confident and fictional table. Likewise an artist with no
 stored candidates explains as "never matched", not as an empty score table
 whose zeroes look like measurements. The recorded `decision_reason` is the
-authority on what was decided; the recomputed numbers are labelled as
+authority on what was decided; the recomputed numbers are labeled as
 recomputed at today's threshold, because the threshold in force at match time
 was not stored and this module will not pretend otherwise.
 
@@ -523,7 +523,7 @@ def audit_record(explanation: Explanation) -> dict[str, Any]:
         # `null`, not `0`, when the stored evidence could not be read. A zero
         # here would enter a reviewer's sample sheet as a measured finding —
         # "the matcher considered nothing" — and `score_audit` is strict about
-        # unlabelled rows precisely so that no absence is scored as a result.
+        # unlabeled rows precisely so that no absence is scored as a result.
         # The writer has to hold the same line as the reader.
         "candidate_count": (
             None if explanation.evidence == EVIDENCE_UNREADABLE else len(explanation.candidates)

@@ -15,7 +15,7 @@
 > have met them (issue #22). Each is now resolved in place: the section carries
 > the content, or it says plainly that the content is not published here and
 > does not pretend to summarize it. Where a claim rested on that corpus alone it
-> is now labelled an unverified premise rather than research (§4).
+> is now labeled an unverified premise rather than research (§4).
 > `make external-refs` pins this file at zero such references.
 
 ## 1. Snapshot

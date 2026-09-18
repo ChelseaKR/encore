@@ -1,5 +1,5 @@
 # pyproject.toml — single, declarative source of build, dependency, and tool config.
-# Configurability/administrability: behaviour is config-over-code; this file is the
+# Configurability/administrability: behavior is config-over-code; this file is the
 # one place project-wide tooling is set.
 [build-system]
 requires = ["hatchling>=1.21"]
@@ -92,7 +92,7 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 # Correctness + analyzability gates. E/F pyflakes, I import order, B bugbear,
 # UP pyupgrade, S bandit security, SIM simplify, RUF ruff-specific, C90 cyclomatic
-# complexity (CQ-05), TD/PGH forbid unlabelled TODOs and bare suppressions (CQ-34/35),
+# complexity (CQ-05), TD/PGH forbid unlabeled TODOs and bare suppressions (CQ-34/35),
 # D pydocstyle (CQ-31 — the docstrings existed, the gate didn't; enabled 2026-07-09).
 select = ["E", "F", "I", "B", "UP", "S", "SIM", "RUF", "C90", "TD", "PGH", "D"]
 ignore = [

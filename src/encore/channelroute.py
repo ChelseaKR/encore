@@ -3,12 +3,12 @@
 F4's fan-out is all-or-nothing: every enabled channel gets every deliverable
 event, so a user with a loud phone channel and a quiet email digest cannot
 have both without muting artists globally. F10 gave *artists* priority tiers
-precisely so heavy-rotation favourites could break through; this is the same
+precisely so heavy-rotation favorites could break through; this is the same
 idea at the other end of the wire.
 
 A route is evaluated **after** F10 has decided an event is deliverable at all,
 and **before** fan-out creates `Delivery` rows, so a routed-away event is
-simply never materialised for that channel. Feeds stay complete: like muting,
+simply never materialized for that channel. Feeds stay complete: like muting,
 routing suppresses deliveries only (docs/adr/0012).
 
 Two rules make the difference between a filter and a trap.
