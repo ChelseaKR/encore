@@ -1,7 +1,7 @@
 """A release-group whose secondary types cannot be read is not a typeless one.
 
 `ReleaseGroup.secondary_types_json` was read at four places with three
-behaviours. Channel routing (`Storage._routable_event`) and `encore settings
+behaviors. Channel routing (`Storage._routable_event`) and `encore settings
 simulate` caught `json.JSONDecodeError` and answered `()`. The
 upcoming-releases query and the events view called `json.loads` unguarded, so
 they raised on a blob the other two tolerated.

@@ -12,7 +12,7 @@ This audit records the documentation sweep and remediation loop for this reposit
 > generator cannot know.
 >
 > That split is deliberate, and so is the warning that comes with it. A generated block
-> legitimises whatever the tree currently says, including damage: if hand-authored prose
+> legitimizes whatever the tree currently says, including damage: if hand-authored prose
 > outside the markers is deleted and the links in it go with it, regeneration will make
 > the link count agree with the loss and report `pass`. Review the prose in a diff, not
 > by trusting the block.
@@ -56,10 +56,10 @@ Counts, not verdicts. A count cannot pass or fail; it can only be current, which
 | Surface | Count | Evidence |
 | --- | ---: | --- |
 | Hand-authored docs | 38 | Markdown at the repository root and under `.github/` and `docs/`, plus the root legal and template files |
-| Test modules | 42 | `tests/test_*.py` |
+| Test modules | 43 | `tests/test_*.py` |
 | Test support files | 4 | other `tests/*.py` (fixtures, `__init__.py`) |
 | Workflow files | 5 | `.github/workflows/*.yml` |
-| Gate scripts | 8 | `scripts/*` (lint and mypy cover these to the same standard as `src`) |
+| Gate scripts | 9 | `scripts/*` (lint and mypy cover these to the same standard as `src`) |
 
 ### By category
 
@@ -90,6 +90,7 @@ Up to 5 representative files per category; the complete list follows below.
 - `scripts/semgrep-test-gate.sh`
 - `scripts/setup-branch-protection.sh`
 - `scripts/todo-gate.sh`
+- `scripts/trufflehog_gate.py`
 - `scripts/validate_slos.py`
 
 ## Test modules checked
@@ -133,6 +134,7 @@ Up to 5 representative files per category; the complete list follows below.
 - `tests/test_settings_simulate.py`
 - `tests/test_storage.py`
 - `tests/test_sync.py`
+- `tests/test_trufflehog_gate.py`
 - `tests/test_unreadable_secondary_types.py`
 - `tests/test_watch_engine.py`
 - `tests/test_workflow_concurrency.py`

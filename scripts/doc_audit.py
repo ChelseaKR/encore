@@ -218,7 +218,7 @@ def uncommitted_inventory_files() -> tuple[str, ...]:
     is still right to pass, and nothing here reaches the rendered block. What it
     removes is the surprise.
 
-    ``--exclude-standard`` honours ``.gitignore``, so build artifacts and
+    ``--exclude-standard`` honors ``.gitignore``, so build artifacts and
     ``.venv`` are already out; unlike ``EXCLUDED_DIR_NAMES`` that is by
     construction rather than by a hand-maintained list. Fails soft, not closed:
     a git that cannot answer this must not fail a check that does not depend on
@@ -363,7 +363,7 @@ def check_links(docs: Iterable[str]) -> tuple[int, list[str]]:
             continue
         for target in _link_targets(path.read_text(encoding="utf-8")):
             checked += 1
-            # Textual normalisation only: realpath would fold `..` *and*, on some
+            # Textual normalization only: realpath would fold `..` *and*, on some
             # platforms, the very case difference this check exists to catch.
             resolved = Path(os.path.normpath(path.parent / target))
             if not _exists_case_sensitively(resolved):

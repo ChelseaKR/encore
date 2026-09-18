@@ -5,17 +5,17 @@ and nothing read it back, so the ≥90% figure M1 exits on would have been
 computed by hand. These tests are about the three ways a scorer can invent
 that figure rather than measure it:
 
-* an **unlabelled** row counted as anything — it is neither right nor wrong,
+* an **unlabeled** row counted as anything — it is neither right nor wrong,
   it is unexamined, and a rate that swallows it is a rate over a sample
   nobody finished;
 * a label that is not a boolean **coerced by truthiness** — ``"correct":
   "yes"`` is truthy in Python, ``"correct": ""`` is falsy, and neither is a
-  judgement a human entered;
+  judgment a human entered;
 * the **wrong denominator** — auto-match precision is a claim about ``auto``
   rows, and folding in ``pending``/``manual``/``skipped`` moves the number
   without measuring anything.
 
-`test_a_real_audit_sheet_scores_as_entirely_unlabelled` is the one that ties
+`test_a_real_audit_sheet_scores_as_entirely_unlabeled` is the one that ties
 the two commands together: the sheet under test is written by
 `encore matches audit` itself, so the format cannot drift apart.
 """
@@ -48,22 +48,22 @@ def _auto(correct: object) -> dict[str, object]:
     return {"artist_key": "k", "status": "auto", "correct": correct}
 
 
-class TestUnlabelledRowsAreNotDataPoints:
+class TestUnlabeledRowsAreNotDataPoints:
     """`correct: null` is an absence, and absence is not a measurement."""
 
-    def test_an_unlabelled_auto_row_enters_neither_half(self) -> None:
+    def test_an_unlabeled_auto_row_enters_neither_half(self) -> None:
         score = score_audit(_sheet(_auto(True), _auto(False), _auto(None)))
         assert score.auto.total == 3
-        assert score.auto.labelled == 2
-        assert score.auto.unlabelled == 1
-        # 1 of 2 labelled, not 1 of 3 and not 2 of 3.
+        assert score.auto.labeled == 2
+        assert score.auto.unlabeled == 1
+        # 1 of 2 labeled, not 1 of 3 and not 2 of 3.
         assert score.auto.rate() == pytest.approx(0.5)
 
-    def test_a_partly_labelled_sheet_reports_no_precision_at_all(self) -> None:
+    def test_a_partly_labeled_sheet_reports_no_precision_at_all(self) -> None:
         score = score_audit(_sheet(_auto(True), _auto(None)))
         report = format_report(score)
         assert "not reported" in report
-        assert "1 of 2 auto decisions are unlabelled" in report
+        assert "1 of 2 auto decisions are unlabeled" in report
         # The rate itself must not appear in the precision paragraph. (It is
         # scoped: coverage legitimately reports 100% here, because both rows
         # are auto rows — which is exactly the confusion worth guarding.)
@@ -74,10 +74,10 @@ class TestUnlabelledRowsAreNotDataPoints:
         score = score_audit(_sheet(_auto(True), _auto(True), _auto(None)))
         report = format_report(score, partial=True)
         assert "100.0%" in report
-        assert "1 of 3 auto decisions are unlabelled" in report
+        assert "1 of 3 auto decisions are unlabeled" in report
         assert "not the U8 figure" in report
 
-    def test_partial_over_a_wholly_unlabelled_sheet_invents_no_denominator(self) -> None:
+    def test_partial_over_a_wholly_unlabeled_sheet_invents_no_denominator(self) -> None:
         score = score_audit(_sheet(_auto(None), _auto(None)))
         report = format_report(score, partial=True)
         assert "none of the 2 auto decisions carry a label" in report
@@ -89,12 +89,12 @@ class TestUnlabelledRowsAreNotDataPoints:
         assert payload["auto_unlabelled"] == 1
         assert payload["meets_target"] is None
 
-    def test_a_status_with_no_rows_is_not_fully_labelled(self) -> None:
-        # An empty tally answering "yes, fully labelled" would let a sheet
+    def test_a_status_with_no_rows_is_not_fully_labeled(self) -> None:
+        # An empty tally answering "yes, fully labeled" would let a sheet
         # with no auto rows report a complete measurement.
         score = score_audit(_sheet({"status": "pending", "correct": None}))
         assert score.auto.total == 0
-        assert score.auto.is_fully_labelled is False
+        assert score.auto.is_fully_labeled is False
 
 
 class TestLabelsAreNotCoerced:
@@ -110,10 +110,10 @@ class TestLabelsAreNotCoerced:
         assert [line.line_number for line in score.unreadable] == [1]
         assert "must be true, false or null" in score.unreadable[0].reason
 
-    def test_an_absent_correct_key_reads_as_unlabelled_not_as_an_error(self) -> None:
+    def test_an_absent_correct_key_reads_as_unlabeled_not_as_an_error(self) -> None:
         score = score_audit(_sheet({"artist_key": "k", "status": "auto"}))
         assert score.unreadable == ()
-        assert score.auto.unlabelled == 1
+        assert score.auto.unlabeled == 1
 
     def test_the_refusal_names_the_line_number_in_a_long_sheet(self) -> None:
         rows = [_auto(True)] * 40 + [_auto("yes")] + [_auto(True)] * 9
@@ -189,7 +189,7 @@ class TestCoverageIsNotPrecision:
 
 
 class TestTheTargetVerdict:
-    """`met` / `NOT met` is reported only over a completely labelled sample."""
+    """`met` / `NOT met` is reported only over a completely labeled sample."""
 
     def test_exactly_the_target_counts_as_met(self) -> None:
         rows = [_auto(True)] * 9 + [_auto(False)]
@@ -232,7 +232,7 @@ class TestTheCommand:
         assert main(["matches", "score", "--in", str(sheet)]) == 1
         assert "line 2" in capsys.readouterr().out
 
-    def test_an_unlabelled_sheet_still_exits_zero_because_it_read_cleanly(
+    def test_an_unlabeled_sheet_still_exits_zero_because_it_read_cleanly(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         sheet = tmp_path / "audit.jsonl"
@@ -268,7 +268,7 @@ class TestTheCommand:
 class TestItScoresWhatAuditActuallyWrites:
     """The two halves must not drift apart — one writes, the other reads."""
 
-    def test_a_real_audit_sheet_scores_as_entirely_unlabelled(self, tmp_path: Path) -> None:
+    def test_a_real_audit_sheet_scores_as_entirely_unlabeled(self, tmp_path: Path) -> None:
         storage = Storage(tmp_path / "data")
         try:
             storage.save_artist_match(
@@ -295,6 +295,6 @@ class TestItScoresWhatAuditActuallyWrites:
         assert score.unreadable == ()
         assert score.rows_read == 2
         # A freshly written sheet is a question, not an answer.
-        assert score.auto.unlabelled == 1
+        assert score.auto.unlabeled == 1
         assert score.precision() is None
         assert "not reported" in format_report(score)

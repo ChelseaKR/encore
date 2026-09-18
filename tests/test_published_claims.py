@@ -50,6 +50,15 @@ def _make_targets(workflow: Path) -> set[str]:
     return {target for run in _run_steps(workflow) for target in pattern.findall(run)}
 
 
+def _make_recipe(target: str) -> list[str]:
+    """Return one Makefile target's command lines, comments and blanks dropped."""
+    text = MAKEFILE.read_text(encoding="utf-8")
+    match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n|\n)*)", text, re.MULTILINE)
+    assert match is not None, f"Makefile has no `{target}:` target"
+    lines = [line[1:].strip() for line in match.group(1).splitlines() if line.startswith("\t")]
+    return [line for line in lines if line and not line.startswith("#")]
+
+
 def _verify_prerequisites() -> list[str]:
     text = MAKEFILE.read_text(encoding="utf-8")
     match = re.search(r"^verify:([^#\n]*)", text, re.MULTILINE)
@@ -115,6 +124,35 @@ def test_ci_runs_no_make_target_verify_does_not_compose() -> None:
         f"ci.yml runs make target(s) {sorted(ci_only)} that `make verify` does not "
         "compose, so `make verify` no longer reproduces the CI gate set"
     )
+
+
+def test_the_container_gate_builds_against_current_debian_not_a_local_cache() -> None:
+    """`make verify` may not scan a package set frozen at whenever a cache filled.
+
+    The Stage 9 CVE gate answers one question: does the image this tree would
+    ship still carry CRITICAL/HIGH CVEs Debian has already fixed? CI answers it
+    honestly by accident — an ephemeral runner has no image store and no BuildKit
+    layer cache, so `FROM python:3.12-slim` is resolved from the registry and the
+    Dockerfile's `apt-get update && apt-get upgrade -y` runs against Debian's
+    archive as it stands that minute.
+
+    A contributor's machine has both caches and neither expires on what actually
+    moves. The tag resolves to whatever copy is already local, and the apt layer's
+    cache key is (parent image id, command string) — a Debian security upload
+    changes neither. Measured 2026-09-13 on one tree: the cached build produced a
+    debian 13.6 image and 12 fixed-available findings (3 CRITICAL, including
+    perl-base CVE-2026-13221); `--pull --no-cache` produced debian 13.7 and none.
+    Same commit, opposite verdict. `--pull` on its own is not enough: with the
+    base tag's digest unchanged the apt layer still reports CACHED.
+    """
+    recipe = " ".join(_make_recipe("container-build"))
+    assert "docker build" in recipe, "`make container-build` no longer builds an image"
+    for flag in ("--pull", "--no-cache"):
+        assert flag in recipe, (
+            f"`make container-build` dropped {flag}, so the CVE scan can grade a cached "
+            "image instead of the one this tree would ship. Both flags are no-ops in CI "
+            "and are what make the local gate agree with it."
+        )
 
 
 def test_readme_status_line_matches_the_roadmap_snapshot() -> None:

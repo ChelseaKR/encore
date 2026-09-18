@@ -93,4 +93,4 @@ spike needs. `encore matches score --in audit.jsonl` reads it back once the
 column is filled in and computes the rate, so the figure that eventually
 freezes these thresholds is reproducible from the sheet rather than from
 somebody's arithmetic. It scores `auto` rows only, and it does not print a
-rate while any of them are unlabelled.
+rate while any of them are unlabeled.

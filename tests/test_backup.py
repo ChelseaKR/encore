@@ -499,7 +499,7 @@ def test_every_probe_names_a_real_column(tmp_path: Path) -> None:
     """The pairing probe degrades to `skipped` if a name drifts — so pin the names.
 
     `_verify_key_pairing` skips any table or column it does not find. That is
-    the right behaviour for an archive from an older schema, but it means a
+    the right behavior for an archive from an older schema, but it means a
     rename in `storage.py` would turn the pairing check into a permanent
     `skipped` with nothing to notice it. This test opens a current-schema
     database and fails if any probe no longer resolves.

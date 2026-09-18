@@ -33,24 +33,23 @@ jobs:
           fetch-depth: 0  # full clone — this is a whole-history scan, not a diff
           persist-credentials: false
       - name: TruffleHog (full history, all reported tiers)
-        uses: trufflesecurity/trufflehog@00155c9dc586f34d189adc83d3ac2698c2ec551f  # v3.95.8
-        with:
-          path: ./
-          # Pinned. The action's `version` input defaults to "latest" and it runs
-          # `ghcr.io/trufflesecurity/trufflehog:${VERSION}`, so SHA-pinning the action
-          # above does not pin what actually scans. That is how this gate changed
-          # behaviour with no commit here: upstream published 3.96.0 and the next
-          # run picked it up.
+        env:
+          # Pinned by tag AND digest. This runs the same image and the same
+          # `git file:///tmp/` command that trufflesecurity/trufflehog@v3.95.8
+          # ran, but without that action. The action always passes `--fail` and
+          # `--github-actions`, so its verdict is "any finding at all". This step
+          # needs the findings as JSON, so that the gate below can grade them
+          # against exact fingerprints (2026-09-18, see
+          # .github/trufflehog-allowlist.toml).
           #
-          # This input and the `uses:` SHA above must name the SAME release. They
-          # did not: the SHA is v3.95.8 and this said 3.96.0, so the action's own
-          # code and the scanner it ran came from different versions. Dependabot
-          # only edits the `uses:` line, so the drift widens on its own -- bump
-          # both together, and keep the trailing comment on `uses:` accurate.
-          version: "3.95.8"
-          # `--fail` is not passed. The action's own command already includes it
-          # and repeating a flag is a hard CLI error, so this scan exited 1 at
-          # startup having read nothing: no chunk count, no findings, no coverage.
+          # The pin still matters. The action's `version` input defaulted to
+          # "latest", so SHA-pinning the action did not pin what scanned, and this
+          # gate once changed behavior with no commit here: upstream published
+          # 3.96.0 and the next run picked it up. Neither Renovate nor Dependabot
+          # can see this line, so bump it by hand, tag and digest together. The
+          # digest is the multi-arch index that 3.95.8 resolved to on the runner
+          # (and on ghcr.io) as of 2026-09-18.
+          IMAGE: ghcr.io/trufflesecurity/trufflehog:3.95.8@sha256:d52e62fe0237bf0199cb79f94593051300b0989d9aeab8b431001d9f75e469c1
           # Lob is excluded because its detector pattern,
           # `\b((live|test)_[a-zA-Z0-9_]{35})\b`, matches any identifier starting
           # `test_` with exactly 35 word characters after it, which is an ordinary
@@ -77,9 +76,28 @@ jobs:
           #   --results=verified,unknown             exit 0,   0 reported
           #   --results=verified,unknown,unverified  exit 183, unverified_secrets: 1
           #
-          # The cost of widening was measured here before it was made: this
-          # repository's full history (857 chunks, 1.5 MB) reports zero findings
-          # under all three tiers with the Lob exclusion above, at both 3.95.8 and
-          # 3.97.1. If another placeholder ever fires, exclude that detector by name
-          # -- as Lob is -- rather than narrowing back to a tier.
-          extra_args: --results=verified,unknown,unverified --exclude-detectors=Lob
+          # When a finding is a placeholder, do NOT exclude its detector and do
+          # NOT narrow the tier. Add its exact fingerprint to
+          # .github/trufflehog-allowlist.toml; the failing run prints it. Exclude a
+          # detector by name only when the detector itself is broken, as Lob's is.
+          # A detector exclusion stops the search for that credential type in
+          # every file and every commit.
+          ARGS: --results=verified,unknown,unverified --exclude-detectors=Lob
+        # No `${{ }}` in this script: everything it needs is in env above.
+        run: |
+          status=0
+          # $ARGS is deliberately unquoted: it is two flags.
+          # shellcheck disable=SC2086
+          docker run --rm -v "$PWD:/tmp" -w /tmp "$IMAGE" \
+            git file:///tmp/ --fail --no-update --json $ARGS \
+            > "$RUNNER_TEMP/trufflehog-findings.jsonl" \
+            2> "$RUNNER_TEMP/trufflehog-scan.log" || status=$?
+          cat "$RUNNER_TEMP/trufflehog-scan.log"
+          # The gate fails on any finding not listed in the allowlist. It also
+          # fails if the scan errored, read zero chunks, or reported a verdict
+          # that does not match its own output. See scripts/trufflehog_gate.py.
+          python3 scripts/trufflehog_gate.py \
+            --findings "$RUNNER_TEMP/trufflehog-findings.jsonl" \
+            --log "$RUNNER_TEMP/trufflehog-scan.log" \
+            --exit-code "$status" \
+            --allowlist .github/trufflehog-allowlist.toml

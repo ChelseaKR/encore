@@ -165,7 +165,7 @@ def stored_secondary_types(raw: str | None) -> tuple[str, ...]:
     reader cannot turn into a list of types is *not* that answer, and returning
     `()` for it published a failed read as a fact about the release.
 
-    The same column had three behaviours across four call sites before this
+    The same column had three behaviors across four call sites before this
     existed: two silently returned `()` (channel routing and `settings
     simulate`), and two called `json.loads` unguarded, so the upcoming-releases
     view and `encore events` raised `JSONDecodeError` on a blob the other two

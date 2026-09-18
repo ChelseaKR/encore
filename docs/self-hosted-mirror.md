@@ -19,7 +19,7 @@ leave the operator's network (`docs/audits/dpia.md`, mirror update).
 | `ENCORE_MB_BASE_URL` | `https://musicbrainz.org/ws/2` | The MusicBrainz web service encore reads. Point it at your mirror's `/ws/2`. |
 | `ENCORE_LB_BASE_URL` | `https://labs.api.listenbrainz.org` | The ListenBrainz labs API used for F7/F8 similar-artist recommendations. |
 | `ENCORE_COVER_ART_BASE_URL` | `https://coverartarchive.org` | The base encore builds cover-art URLs from. |
-| `ENCORE_MB_RATE_LIMIT` | `1` | Requests per second against `ENCORE_MB_BASE_URL`. **Honoured only when that host is not MetaBrainz's own.** |
+| `ENCORE_MB_RATE_LIMIT` | `1` | Requests per second against `ENCORE_MB_BASE_URL`. **Honored only when that host is not MetaBrainz's own.** |
 
 `encore doctor` prints the endpoint in use on its `metadata_endpoint` line, and
 `/readyz` reports it as a named check. Both are the first place to look when a
@@ -35,7 +35,7 @@ somebody exported a variable is a failure encore should not be able to have.
 Raising the rate means running a mirror; there is no other door.
 
 **encore never silently falls back to the public host.** A base URL that is
-malformed, or that carries a credential (`https://user:pass@host/ws/2` is
+malformed, or that carries a credential (`https://<user>:<password>@<host>/ws/2` is
 refused outright, and never echoed into a log or a health check), is an error.
 A mirror that does not answer, or that answers something other than the
 MusicBrainz web service, makes `/readyz` unready with the reason and stops
@@ -76,7 +76,7 @@ services:
     environment:
       # Your musicbrainz-docker instance. The path is the web service root.
       ENCORE_MB_BASE_URL: "http://musicbrainz:5000/ws/2"
-      # Only honoured because the host above is not musicbrainz.org.
+      # Only honored because the host above is not musicbrainz.org.
       ENCORE_MB_RATE_LIMIT: "20"
     volumes:
       - encore-data:/data

@@ -253,7 +253,7 @@ def test_narrowing_is_reported_as_well_as_widening(storage: Storage, httpx_mock:
 def test_an_artist_baselined_inside_the_window_is_excluded_and_named(
     storage: Storage, httpx_mock: HTTPXMock
 ) -> None:
-    """A back catalogue is silent on the first poll under every policy.
+    """A back catalog is silent on the first poll under every policy.
 
     Counting it as "would not have been delivered" would be true and useless;
     counting it as deliverable under a wider policy would be false. It is
@@ -516,7 +516,7 @@ def test_an_omitted_flag_inherits_rather_than_resetting_the_other_half(
                 "--data-dir",
                 str(tmp_path / "data"),
                 # Shorter than the fixture's 40-day-old baseline poll, so the
-                # window contains the EP and not the back catalogue.
+                # window contains the EP and not the back catalog.
                 "--since",
                 "30d",
                 "--allow-secondary",

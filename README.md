@@ -162,9 +162,9 @@ asserted one.
 
 `encore matches score --in audit.jsonl` reads that sheet back once the `correct`
 column is filled in. It reports auto-match precision over the `auto` rows only,
-counts the rows nobody labelled, and declines to print a rate at all while any
-of them are outstanding — a rate over a partly-labelled sample is a different
-claim from the one M1 exits on. `--partial` scores the labelled rows and says
+counts the rows nobody labeled, and declines to print a rate at all while any
+of them are outstanding — a rate over a partly-labeled sample is a different
+claim from the one M1 exits on. `--partial` scores the labeled rows and says
 so; `--json` emits the same figures with `precision` left null whenever no rate
 was computed.
 

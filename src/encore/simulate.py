@@ -26,7 +26,7 @@ reconstruction only fills in what did not.
 ## The blind spot, named rather than papered over
 
 An artist's **first** poll is silent by design (`docs/adr/0011`): the whole
-back catalogue is inventoried and raises no ``new`` events whatever the policy
+back catalog is inventoried and raises no ``new`` events whatever the policy
 says. A group first seen during that poll cannot be replayed under any policy.
 
 Rather than guess at a tolerance for "which rows belong to the baseline poll",
@@ -95,7 +95,7 @@ OUTCOME_MUTED = "muted"
 OUTCOME_ROUTED_AWAY = "routed_away"
 # Allowed, unmuted, and at least one channel would have received it.
 OUTCOME_DELIVERED = "delivered"
-# The artist's first poll fell inside the window: its back catalogue is silent
+# The artist's first poll fell inside the window: its back catalog is silent
 # under every policy, so it cannot be replayed under any of them.
 OUTCOME_BASELINE = "baseline"
 # Allowed by the policy in force, post-baseline, and yet no event was recorded.
@@ -263,7 +263,7 @@ class SimulationReport:
         return dict(Counter(o.outcome for o in self.outcomes))
 
     def deliveries_by_channel(self) -> dict[str, int]:
-        """One count per channel — the figure the real path materialises."""
+        """One count per channel — the figure the real path materializes."""
         counter: Counter[str] = Counter()
         for outcome in self.outcomes:
             for name in outcome.channels:
@@ -507,7 +507,7 @@ def build_corpus(
       not the history of revisions.
 
     An artist whose *earliest* recorded group falls inside the window was
-    baselined inside it, so its back catalogue is silent under every policy
+    baselined inside it, so its back catalog is silent under every policy
     (`docs/adr/0011`) and its observations are flagged rather than replayed.
     """
     groups = storage.all_release_groups()
@@ -643,7 +643,7 @@ def _coverage_lines(report: SimulationReport) -> list[str]:
         lines.append(
             f"  {len(report.artists_baselined_in_window)} artist(s) were first polled "
             f"inside this window, so {excluded} observation(s) are excluded: a back "
-            f"catalogue is silent on the baseline poll under every policy (ADR-0011)."
+            f"catalog is silent on the baseline poll under every policy (ADR-0011)."
         )
     unexplained = sum(1 for o in report.outcomes if o.outcome == OUTCOME_UNEXPLAINED)
     if unexplained:
