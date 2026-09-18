@@ -64,6 +64,12 @@ from encore.recommend.lb import ListenBrainzClient
 from tests.mb_fixtures import mb_search_response
 
 MIRROR = "https://mb.lan.example/ws/2"
+#: The refusal test needs a base URL that really carries a password, so this one
+#: cannot be a `<user>:<password>` template. It is a fixture: `.example` is
+#: reserved (RFC 2606) and never resolves. The trailing tag tells the full-history
+#: secret scan (.github/workflows/trufflehog.yml) to skip this one line and no
+#: other; it must stay on the same line as the URL to do that.
+CREDENTIAL_URL = "https://admin:hunter2@mb.lan.example/ws/2"  # trufflehog:ignore
 ENDPOINT_ENV = (MB_BASE_URL_ENV, LB_BASE_URL_ENV, COVER_ART_BASE_URL_ENV, MB_RATE_LIMIT_ENV)
 
 
@@ -175,7 +181,7 @@ def test_a_base_url_carrying_a_credential_is_refused_and_never_echoed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """This message goes to logs, `/readyz` and `doctor`. It must not carry the password."""
-    monkeypatch.setenv(MB_BASE_URL_ENV, "https://admin:hunter2@mb.lan.example/ws/2")
+    monkeypatch.setenv(MB_BASE_URL_ENV, CREDENTIAL_URL)
     with pytest.raises(EndpointConfigError) as raised:
         resolve_endpoints()
     message = str(raised.value)

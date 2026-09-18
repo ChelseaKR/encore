@@ -8,6 +8,32 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The weekly full-history secret scan was red on two placeholder URLs, and
+  the only built-in ways to clear it would have narrowed it.** PR #76 documented
+  and tested the rule that a MusicBrainz base URL carrying userinfo is refused.
+  It did that with two placeholder credential URLs, one in
+  `docs/self-hosted-mirror.md` and one in `tests/test_endpoints.py`, and quoted
+  one of them again in its own squash-commit message. TruffleHog's URI detector
+  reported all of them from 2026-09-13 on: 7 unverified findings across `df7ada8`
+  on main and `0bc6fff` on the unmerged `feat/self-hosted-mirror-endpoints`.
+  Verification failed with "no such host" for each one, and none is a real
+  credential. TruffleHog itself can narrow a scan only by detector, by path or
+  by a starting commit. Excluding the URI detector stops the search for URL
+  credentials in every file. A path exclusion stops scanning two files forever,
+  and still leaves the commit-message finding red, because a commit message has
+  no path. A scan base drops every commit before #76. So the scan now runs
+  unfiltered and `scripts/trufflehog_gate.py` grades its JSON output against
+  `.github/trufflehog-allowlist.toml`. An entry there is one detector, one full
+  commit SHA, one path ("" for the commit message) and the SHA-256 of one
+  matched value. A neighbouring commit, file or value fails. So does a scan
+  that errored, read zero chunks, or reports a verdict its output does not back.
+  The tier (`verified,unknown,unverified`), the Lob-only detector exclusion and
+  the TruffleHog version (3.95.8, now also pinned by digest) are unchanged. At
+  HEAD, the doc example is now a `<user>:<password>@<host>` template. The test
+  fixture, which needs a real password to prove the refusal never echoes it,
+  carries TruffleHog's inline ignore tag, and a test counts every such tag in
+  the repository.
+
 - **The Stage 9 CVE gate graded a Docker layer cache instead of the tree, and
   blocked pushes CI would have accepted.** `make container-build` ran a plain
   `docker build`. On CI that is honest by accident: an ephemeral runner has no

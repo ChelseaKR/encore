@@ -1,0 +1,78 @@
+# Reviewed TruffleHog findings in this repository's history. Read by
+# scripts/trufflehog_gate.py, which fails the weekly full-history scan
+# (.github/workflows/trufflehog.yml) on any finding that is NOT listed here.
+#
+# An entry covers exactly one detector, one commit, one path in that commit (""
+# is the commit message) and one matched value, identified by the SHA-256 of
+# TruffleHog's `Raw` field. It cannot cover another commit, another file, or a
+# different credential in the same file. There are no wildcards. The gate prints
+# the fingerprint of every finding it rejects, so an entry is copied from a
+# failing run and never written by hand.
+#
+# Add an entry only for a value you have confirmed is not a credential. A real
+# credential is revoked, and then the finding is dealt with. It is never
+# allowlisted.
+#
+# `redacted` is for the reader and is not matched. The gate warns about an entry
+# that matches nothing (e.g. its branch was deleted); remove it then.
+
+# --- PR #76, placeholder URLs, added 2026-09-18 --------------------------------
+# PR #76 (self-hosted MusicBrainz mirror) documented and tested the rule that a
+# base URL carrying userinfo is refused. It did that with two placeholder URLs,
+# and TruffleHog's URI detector reported them once the scan was widened to every
+# result tier. First red run: 2026-09-13. Both are fixtures:
+#   * `admin` / `hunter2` at `mb.lan.example`: `.example` is reserved by
+#     RFC 2606 and cannot resolve. Verification failed with "no such host".
+#   * `user` / `pass` at `host`: a single-label, made-up host that also failed
+#     with "no such host".
+# Each value appears in the squash commit on main (df7ada8) and in the
+# unmerged branch `feat/self-hosted-mirror-endpoints` (0bc6fff). The squash
+# commit's message repeats the second one, and a path exclusion cannot reach
+# a commit message. HEAD no longer carries either as a scannable literal: the
+# doc uses `<user>:<password>@<host>`, and the test fixture carries TruffleHog's
+# inline ignore tag on its one line (tests/test_trufflehog_gate.py counts those).
+
+[[finding]]
+detector = "URI"
+commit = "df7ada82464fc0b16b2e1f50da2188dba7325679"
+path = "tests/test_endpoints.py"
+raw_sha256 = "2b5c82bd5cd55b47bac7e3ef194a48a864deb78baffb0a2a640807a936553181"
+redacted = "https://admin:********@mb.lan.example/ws/2"
+reason = "Test fixture for the userinfo refusal (#76); .example host, never resolves."
+added = 2026-09-18
+
+[[finding]]
+detector = "URI"
+commit = "0bc6fff24f6e99b23a21f7def6a01fb772773d78"
+path = "tests/test_endpoints.py"
+raw_sha256 = "2b5c82bd5cd55b47bac7e3ef194a48a864deb78baffb0a2a640807a936553181"
+redacted = "https://admin:********@mb.lan.example/ws/2"
+reason = "Same fixture on the unmerged branch feat/self-hosted-mirror-endpoints."
+added = 2026-09-18
+
+[[finding]]
+detector = "URI"
+commit = "df7ada82464fc0b16b2e1f50da2188dba7325679"
+path = "docs/self-hosted-mirror.md"
+raw_sha256 = "ae7c9f95165aff0b836da5283e9c119d1c8d7ad9d169aba95874044b1b03fd55"
+redacted = "https://user:********@host/ws/2"
+reason = "Doc example of a refused base URL (#76); placeholder user, password and host."
+added = 2026-09-18
+
+[[finding]]
+detector = "URI"
+commit = "0bc6fff24f6e99b23a21f7def6a01fb772773d78"
+path = "docs/self-hosted-mirror.md"
+raw_sha256 = "ae7c9f95165aff0b836da5283e9c119d1c8d7ad9d169aba95874044b1b03fd55"
+redacted = "https://user:********@host/ws/2"
+reason = "Same doc example on the unmerged branch feat/self-hosted-mirror-endpoints."
+added = 2026-09-18
+
+[[finding]]
+detector = "URI"
+commit = "df7ada82464fc0b16b2e1f50da2188dba7325679"
+path = ""
+raw_sha256 = "ae7c9f95165aff0b836da5283e9c119d1c8d7ad9d169aba95874044b1b03fd55"
+redacted = "https://user:********@host/ws/2"
+reason = "The same doc example quoted in #76's squash-commit message."
+added = 2026-09-18
