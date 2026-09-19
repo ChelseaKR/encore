@@ -34,6 +34,7 @@ from encore.artistsettings import (
     canonical_override_json,
     parse_settings_json,
     resolve_effective,
+    stored_secondary_types,
 )
 from encore.channelroute import (
     ChannelRoute,
@@ -1053,14 +1054,7 @@ class Storage:
         owners: dict[str, list[Artist]],
     ) -> RoutableEvent:
         """Describe one event in the terms a route may ask about."""
-        secondary: tuple[str, ...] = ()
-        if group is not None and group.secondary_types_json:
-            try:
-                parsed = json.loads(group.secondary_types_json)
-            except json.JSONDecodeError:
-                parsed = []
-            if isinstance(parsed, list):
-                secondary = tuple(str(item) for item in parsed)
+        secondary = stored_secondary_types(group.secondary_types_json) if group is not None else ()
         rows = owners.get(group.artist_mbid, []) if group is not None else []
         return RoutableEvent(
             priority=policy.priority if policy is not None else PRIORITY_NORMAL,
@@ -1839,9 +1833,7 @@ class Storage:
                 date.fromisoformat(group.first_release_date)
             except ValueError:  # pragma: no cover - MB dates are ISO; belt and braces
                 continue
-            secondary = (
-                tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
-            )
+            secondary = stored_secondary_types(group.secondary_types_json)
             if not policies[group.artist_mbid].passes(group.primary_type, secondary):
                 # The same predicate `watch_artist` applies to events — one
                 # policy, applied consistently across notifications, RSS and
@@ -1917,9 +1909,7 @@ class Storage:
             if group is None or row.id is None:  # pragma: no cover - FK guarantees the group
                 continue
             match = matches.get(group.artist_mbid)
-            secondary = (
-                tuple(json.loads(group.secondary_types_json)) if group.secondary_types_json else ()
-            )
+            secondary = stored_secondary_types(group.secondary_types_json)
             views.append(
                 EventView(
                     event_id=row.id,
