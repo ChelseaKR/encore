@@ -1197,6 +1197,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Portfolio standards pin moved from v3.0.0 to v3.0.1 (2026-10-02).**
+  `.standards-version` and the `ref:` in `.github/workflows/standards.yml` move
+  together. v3.0.1 is a patch release: re-verified freshness stamps, text
+  corrections and tooling fixes, with no control, threshold or gate changed.
 - **Portfolio standards pin moved from v1.0.1 to v3.0.0 (2026-10-02).**
   `.standards-version` and the `ref:` in `.github/workflows/standards.yml` move
   together. Under v1.0.1 the freshness gate failed: four standards (CI/CD, Code
