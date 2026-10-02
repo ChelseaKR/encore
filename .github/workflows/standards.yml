@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ChelseaKR/portfolio-standards
-          ref: v1.0.1                      # bump in lockstep with .standards-version
+          ref: v3.0.0                      # bump in lockstep with .standards-version
           ssh-key: ${{ secrets.STANDARDS_DEPLOY_KEY }}
           path: .standards
           persist-credentials: false
