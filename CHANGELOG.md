@@ -1197,6 +1197,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Portfolio standards pin moved from v1.0.1 to v3.0.0 (2026-10-02).**
+  `.standards-version` and the `ref:` in `.github/workflows/standards.yml` move
+  together. Under v1.0.1 the freshness gate failed: four standards (CI/CD, Code
+  Quality, Quality & Metrics and the Responsible-Tech Framework) were last
+  verified 2026-06-21, 103 days earlier, past their 92-day cadence. v3.0.0
+  carries the re-verified texts and its freshness gate passes.
+- **`CITATION.cff` no longer records a `date-released` for 0.1.0.** No tag names
+  0.1.0, and v3.0.0's DOC-08 check fails a release date on an unreleased
+  version. This returns the file to the undated state the 2026-07-14 audit
+  entry describes; the date is set when the first release is tagged.
 - **Audit truth-up for the F5 surface (2026-08-04).** `docs/audits/residual-risk.md`
   activates RR-06 (feed tokens are live bearer credentials) and adds RR-07
   (one token means all-or-nothing revocation); the DPIA inventory gains the
